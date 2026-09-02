@@ -401,6 +401,21 @@
       closeNoticePanel(){const overlay=document.getElementById('notice-overlay');if(!overlay?.classList.contains('is-open'))return;overlay.classList.remove('is-open');overlay.setAttribute('aria-hidden','true');this.panelOpen=false;}
       updateInteractionPrompt(){const door=this.interactables.find(o=>o.kind==='cafe-door');if(this.location==='street'&&this.doorReady&&door&&Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(door)))>40)this.doorReady=null;const candidates=this.interactables.filter(o=>o.enabled!==false&&o.label&&o.x>-900).map(o=>({task:o,distance:Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(o)))})).sort((a,b)=>a.distance-b.distance);const nearLabel=candidates[0]?.distance<=48?candidates[0].task:null;if(nearLabel){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const sx=this.location==='street'?(this.cameras.main.scrollX||0):0;const name=nearLabel.kind==='cafe-door'?'承保咖啡馆入口':nearLabel.kind==='exit-door'?'出口':nearLabel.kind==='life-item'?'物品':nearLabel.label;objectLabel.textContent=name;objectLabel.style.left=`${(nearLabel.x-sx)*zoom}px`;objectLabel.style.top=`${(nearLabel.y-44)*zoom}px`;objectLabel.classList.add('show')}else objectLabel.classList.remove('show');if(this.isMoving||window.GameInputLocks?.isLocked?.()||this.dialogVisible||this.panelOpen||this.introActive||this.transitioning){this.interactionMarker.setVisible(false);return}const nearIcon=candidates[0]?.distance<=40?candidates[0].task:null;if(nearIcon){this.interactionMarker.setPosition(nearIcon.x,nearIcon.y-28).setVisible(true)}else this.interactionMarker.setVisible(false)}
       interact(task,fromClick=false){
+        /* 船长事件见闻挂钩（原 captainEvent 包装层收敛进单点分发） */
+        if(task.kind==='captain-cargo'){window.CaptainLore?.onCargo?.();return}
+        if(task.kind==='board')window.CaptainLore?.onBoard?.();
+        if(task.kind==='records')window.CaptainLore?.onRecords?.();
+        /* 生活模拟：场景拾取（原 HarborLife 包装层收敛进本体） */
+        if(task?.kind==='life-item'){HarborLife.pick(task.lifeItemId);return}
+        /* 角色剧情分发：注册表查表（eve→伊芙见闻、shipowner→船长对话…），返回 true 视为已处理 */
+        if(task?.kind==='npc'){
+          const flow=window.NpcFlowRegistry?.handlers?.[task.key];
+          if(flow&&flow.call(this,task))return;
+        }
+        /* 行动力经济：非故事角色与场所消耗 1 点（故事角色豁免——维持原包装层的行为） */
+        const storyOwner=task?.key==='lloyd'||task?.id==='cafe_owner';
+        if(task&&!storyOwner&&!HarborLife.canAffordAction(task.kind)){HarborLife.toast('你已经有些疲惫了，先喝杯咖啡再处理这件事。');return}
+        if(task&&!storyOwner)HarborLife.spendAction(task?.kind);
         const flags=HarborLife.state.worldFlags;
         if(task.kind==='cafe-door'){if(fromClick){if(!flags.unlockedEntrances.includes('cafe'))flags.unlockedEntrances.push('cafe');HarborLife.save();this.enterCafe();return}this.doorReady='enter';showSystemHint('已到承保咖啡馆门口，点击门进入。');return}
         if(task.kind==='exit-door'){if(fromClick){if(!flags.unlockedEntrances.includes('harbor'))flags.unlockedEntrances.push('harbor');HarborLife.save();this.exitCafe();return}this.doorReady='exit';showSystemHint('已到出口门，点击门返回港口街道。');return}
@@ -427,6 +442,8 @@
       exitCafe(){this.transitioning=true;this.isMoving=false;this.target=null;this.pending=null;this.route=[];this.doorReady=null;marketGuide.classList.remove('show');this.clearDialogue();this.cameras.main.fadeOut(180,0,0,0);this.time.delayedCall(200,()=>{this.setStreetScene(false);this.cameras.main.fadeIn(180);this.transitioning=false})}
       update(time,delta){this.updateWorldSigns();this.updateInteractionPrompt();if(this.transitioning||!this.isMoving||!this.target)return;const dt=Math.min(delta,50)/1000,dx=this.target.x-this.player.x,dy=this.target.y-this.player.y,distance=Math.hypot(dx,dy);if(distance<=GAME_BALANCE.walkSpeed*dt){this.player.setPosition(this.target.x,this.target.y);this.arrive();return}const step=GAME_BALANCE.walkSpeed*dt,nx=this.player.x+dx/distance*step,ny=this.player.y+dy/distance*step;if(this.isBlocked(nx,ny)){this.target=null;this.pending=null;this.route=[];this.routeIndex=0;this.arrive();return}this.player.setPosition(nx,ny)}
     }
+    /* NPC 剧情分发注册表：interact 单点查表，替代多层 prototype 包装（eve-lore/linear/unposted/captainEvent）。 */
+    window.NpcFlowRegistry={handlers:{},register(key,handler){if(key&&typeof handler==='function')this.handlers[key]=handler;return this}};
     /* ============================================================
      * 风闻局（收敛后单一实现）
      * 原为 v1 → 约束补丁 → v2 → v3 四代 prototype 覆盖链（部分方法被覆盖 4-5 次），
@@ -987,7 +1004,6 @@
     PixelHarborScene.prototype.setStreetScene=function(initial){const r=baseSetStreetLife.call(this,initial);if(HarborLife){HarborLife.setScene(this);HarborLife.syncScene(this)}return r};
     const baseSetInteriorLife=PixelHarborScene.prototype.setInteriorScene;
     PixelHarborScene.prototype.setInteriorScene=function(){const r=baseSetInteriorLife.call(this);if(HarborLife){HarborLife.setScene(this);HarborLife.syncScene(this)}return r};
-    const baseInteractLife=PixelHarborScene.prototype.interact;
     PixelHarborScene.prototype.playPickupFeedback=function(id){
         const target=document.getElementById('inventory-button'),box=target?.getBoundingClientRect(),view=viewport.getBoundingClientRect();
       const sprite=this.add.sprite(this.player.x,this.player.y-18,'marker',1).setDepth(95).setScale(.55).setAlpha(.95);
@@ -999,12 +1015,6 @@
       if(id==='coffee'){this.tweens.add({targets:this.player,scaleX:1.04,scaleY:.96,yoyo:true,repeat:1,duration:90});return}
       if(id==='pass'){this.interactionMarker.setPosition(1148,146).setVisible(true);this.time.delayedCall(900,()=>this.interactionMarker.setVisible(false));return}
       if(id==='chart'||id==='letter'){showSystemHint(HarborLife.detailText(id).split('\n')[1]||'你查看了物品内容。')}
-    };
-    PixelHarborScene.prototype.interact=function(task,fromClick){
-      if(task?.kind==='life-item'){HarborLife.pick(task.lifeItemId);return}
-      const storyOwner=task?.key==='lloyd'||task?.id==='cafe_owner';if(task&&!storyOwner&&!HarborLife.canAffordAction(task.kind)){HarborLife.toast('你已经有些疲惫了，先喝杯咖啡再处理这件事。');return}
-      if(task&&!storyOwner)HarborLife.spendAction(task?.kind);
-      return baseInteractLife.call(this,task,fromClick)
     };
     const basePromptLife=PixelHarborScene.prototype.updateInteractionPrompt;
     PixelHarborScene.prototype.updateInteractionPrompt=function(){
@@ -1083,7 +1093,8 @@
       if(action==='finish-event'){e.completed=true;e.phase='complete';save();render()}
     }
     const oldSetInterior=PixelHarborScene.prototype.setInteriorScene;PixelHarborScene.prototype.setInteriorScene=function(){const result=oldSetInterior.call(this);if(!this.interactables.some(o=>o.key==='captain-cargo'))this.interactables.push(makeInteractive({kind:'captain-cargo',key:'captain-cargo',label:'查看货物清单',x:145,y:112,approach:{x:145,y:136},reach:32,type:'building',action:{type:'inspect'}}));return result};
-    const oldInteract=PixelHarborScene.prototype.interact;PixelHarborScene.prototype.interact=function(task,fromClick){if(task?.kind==='npc'&&task.key==='shipowner'){open();return}if(task?.kind==='captain-cargo'){discover('cargo');const e=state();if(!e.purchased.includes('货物清单：总值 100，香料受潮易损'))e.purchased.push('货物清单：总值 100，香料受潮易损');showSystemHint('货物清单：香料、咖啡豆和纺织品，总值 100 潮汐币。');return}if(task?.kind==='board')discover('monsoon');if(task?.kind==='records')discover('log');return oldInteract.call(this,task,fromClick)};
+    /* 交互分发已收敛进 PixelHarborScene.interact 单点；此处仅导出见闻解锁服务供其调用。 */
+    window.CaptainLore={discover,onBoard:()=>discover('monsoon'),onRecords:()=>discover('log'),onCargo:()=>{discover('cargo');const e=state();if(!e.purchased.includes('货物清单：总值 100，香料受潮易损'))e.purchased.push('货物清单：总值 100，香料受潮易损');showSystemHint('货物清单：香料、咖啡豆和纺织品，总值 100 潮汐币。')}};
     close.addEventListener('click',closePanel);overlay.addEventListener('click',e=>{if(e.target===overlay)closePanel()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&overlay.classList.contains('show'))closePanel()});
   })();
   </script>
