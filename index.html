@@ -344,7 +344,7 @@
         this.time.addEvent({delay:520,loop:true,callback:()=>{lamp.setFrame(lamp.frame.name==='0'?1:0);gull.setFrame(gull.frame.name==='0'?1:0)}})
       }
       setStreetScene(initial=false){
-        this.location='street';this.panelOpen=false;underwritingPanel.classList.remove('show');this.indoorSprites.forEach(s=>s.setVisible(false));this.streetDecor.forEach(s=>s.setVisible(true));this.map.setTexture('map'+this.mapFrame).setPosition(WORLD_W/2,H/2);this.player.setPosition(initial?610:980,initial?174:174);this.player.setFrame(3);this.marker.setVisible(false);this.interactionMarker.setVisible(false);this.doorReady=null;this.obstacles=[...STREET_MAP.buildings,{x:0,y:232,w:WORLD_W,h:38},{x:0,y:84,w:66,h:80},{x:1150,y:92,w:50,h:86}];
+        this.location='street';this.sceneId='street';this.panelOpen=false;underwritingPanel.classList.remove('show');this.indoorSprites.forEach(s=>s.setVisible(false));this.streetDecor.forEach(s=>s.setVisible(true));this.map.setTexture('map'+this.mapFrame).setPosition(WORLD_W/2,H/2);this.player.setPosition(initial?610:980,initial?174:174);this.player.setFrame(3);this.marker.setVisible(false);this.interactionMarker.setVisible(false);this.doorReady=null;this.obstacles=[...STREET_MAP.buildings,{x:0,y:232,w:WORLD_W,h:38},{x:0,y:84,w:66,h:80},{x:1150,y:92,w:50,h:86}];
         this.interactables=[
           {kind:'cafe-door',x:1000,y:136,approach:{x:1000,y:170},reach:32},
           {kind:'closed',name:'港口事务所',x:250,y:121,approach:{x:250,y:154},reach:25},
@@ -359,7 +359,7 @@
       }
       setInteriorScene(){this.interactables=this.interactables.map(makeInteractive);
         this.panelOpen=false;underwritingPanel.classList.remove('show');this.isMoving=false;this.target=null;this.pending=null;this.route=[];
-        this.location='interior';window.GameEventBus?.emit({type:'scene_entered',payload:{sceneId:'castle_cafe'}});this.streetDecor.forEach(s=>s.setVisible(false));this.map.setTexture('cafe-interior').setPosition(W/2,H/2);this.player.setPosition(240,245);this.player.setFrame(7);this.marker.setVisible(false);this.interactionMarker.setVisible(false);objectLabel.classList.remove('show');this.cameras.main.stopFollow();this.cameras.main.setBounds(0,0,W,H);this.cameras.main.setScroll(0,0);this.doorReady=null;this.obstacles=[{x:0,y:0,w:W,h:66},{x:10,y:68,w:72,h:108},{x:8,y:180,w:166,h:62},{x:236,y:148,w:134,h:62},{x:360,y:74,w:104,h:52},{x:398,y:8,w:72,h:56}];this.interactables=[{id:'cafe_owner',kind:'npc',key:'lloyd',speaker:'咖啡馆老板',label:'交谈 · 咖啡馆老板',x:120,y:172,approach:{x:150,y:170},reach:36,interactionRadius:36,visible:true,interactable:true},{id:'cafe_lore_keeper',kind:'npc',key:'eve',speaker:'伊芙·船讯抄写员',label:'查看港口见闻 · 伊芙',x:275,y:105,approach:{x:275,y:130},reach:36,interactionRadius:36,visible:true,interactable:true},{kind:'npc',key:'demovre',speaker:'棣莫弗',label:'棣莫弗',x:410,y:139,approach:{x:365,y:135},reach:32},{kind:'npc',key:'shipowner',speaker:'年轻船东',label:'年轻船东',x:335,y:137,approach:{x:335,y:140},route:[{x:210,y:140},{x:335,y:140}],reach:32},{kind:'npc',key:'xiaolei',speaker:'小蕾',label:'小蕾',x:190,y:135,approach:{x:190,y:158},reach:32},{kind:'npc',key:'clerk',speaker:'账房先生',label:'账房先生',x:175,y:100,approach:{x:175,y:125},reach:32},{kind:'board',key:'board',label:'公告板',x:120,y:115,approach:{x:120,y:140},reach:32},{kind:'records',key:'records',label:'航运记录柜',x:60,y:145,approach:{x:92,y:150},reach:32},{id:'underwriting_desk',kind:'underwriting',label:'承保桌',x:300,y:205,approach:{x:300,y:220},reach:32},{kind:'rumor',label:'查看今日风闻',x:430,y:205,approach:{x:392,y:215},reach:34},{kind:'ledger',key:'ledger',label:'账本',x:285,y:205,approach:{x:285,y:220},reach:22},{kind:'corner',key:'corner',label:'棣莫弗的角桌',x:380,y:120,approach:{x:365,y:135},reach:32},{kind:'shelf',key:'shelf',label:'书架',x:410,y:60,approach:{x:380,y:72},reach:32},{kind:'counter',key:'counter',label:'柜台',x:90,y:190,approach:{x:90,y:170},reach:32},{kind:'fireplace',key:'fireplace',label:'壁炉',x:240,y:55,approach:{x:240,y:85},reach:32},{kind:'window',key:'window',label:'窗户',x:140,y:50,approach:{x:140,y:80},reach:32},{id:'cafe_exit',kind:'exit-door',label:'出口',x:240,y:246,approach:{x:240,y:220},reach:32,interactionRadius:32}];this.createIndoorSprites();this.createRumorTableSprite();this.setTopbar('承保咖啡馆 · 室内','去承保桌，开始今天的接单');if(!this.visitedFlags.marketOpened){marketGuide.style.left='300px';marketGuide.style.top='178px';marketGuide.classList.add('show')}else marketGuide.classList.remove('show');if(!this.visitedFlags.cafeWelcome){this.visitedFlags.cafeWelcome=true;this.saveFlags();this.time.delayedCall(300,()=>this.openDialogue('劳埃德',['新来的？那边那张桌子，今天有四张单要出。坐过去就知道了。']))}}
+        this.location='interior';this.sceneId='castle_cafe';window.GameEventBus?.emit({type:'scene_entered',payload:{sceneId:'castle_cafe'}});this.streetDecor.forEach(s=>s.setVisible(false));this.map.setTexture('cafe-interior').setPosition(W/2,H/2);this.player.setPosition(240,245);this.player.setFrame(7);this.marker.setVisible(false);this.interactionMarker.setVisible(false);objectLabel.classList.remove('show');this.cameras.main.stopFollow();this.cameras.main.setBounds(0,0,W,H);this.cameras.main.setScroll(0,0);this.doorReady=null;this.obstacles=[{x:0,y:0,w:W,h:66},{x:10,y:68,w:72,h:108},{x:8,y:180,w:166,h:62},{x:236,y:148,w:134,h:62},{x:360,y:74,w:104,h:52},{x:398,y:8,w:72,h:56}];this.interactables=[{id:'cafe_owner',kind:'npc',key:'lloyd',speaker:'咖啡馆老板',label:'交谈 · 咖啡馆老板',x:120,y:172,approach:{x:150,y:170},reach:36,interactionRadius:36,visible:true,interactable:true},{id:'cafe_lore_keeper',kind:'npc',key:'eve',speaker:'伊芙·船讯抄写员',label:'查看港口见闻 · 伊芙',x:275,y:105,approach:{x:275,y:130},reach:36,interactionRadius:36,visible:true,interactable:true},{kind:'npc',key:'demovre',speaker:'棣莫弗',label:'棣莫弗',x:410,y:139,approach:{x:365,y:135},reach:32},{kind:'npc',key:'shipowner',speaker:'年轻船东',label:'年轻船东',x:335,y:137,approach:{x:335,y:140},route:[{x:210,y:140},{x:335,y:140}],reach:32},{kind:'npc',key:'xiaolei',speaker:'小蕾',label:'小蕾',x:190,y:135,approach:{x:190,y:158},reach:32},{kind:'npc',key:'clerk',speaker:'账房先生',label:'账房先生',x:175,y:100,approach:{x:175,y:125},reach:32},{kind:'board',key:'board',label:'公告板',x:120,y:115,approach:{x:120,y:140},reach:32},{kind:'records',key:'records',label:'航运记录柜',x:60,y:145,approach:{x:92,y:150},reach:32},{id:'underwriting_desk',kind:'underwriting',label:'承保桌',x:300,y:205,approach:{x:300,y:220},reach:32},{kind:'rumor',label:'查看今日风闻',x:430,y:205,approach:{x:392,y:215},reach:34},{kind:'ledger',key:'ledger',label:'账本',x:285,y:205,approach:{x:285,y:220},reach:22},{kind:'corner',key:'corner',label:'棣莫弗的角桌',x:380,y:120,approach:{x:365,y:135},reach:32},{kind:'shelf',key:'shelf',label:'书架',x:410,y:60,approach:{x:380,y:72},reach:32},{kind:'counter',key:'counter',label:'柜台',x:90,y:190,approach:{x:90,y:170},reach:32},{kind:'fireplace',key:'fireplace',label:'壁炉',x:240,y:55,approach:{x:240,y:85},reach:32},{kind:'window',key:'window',label:'窗户',x:140,y:50,approach:{x:140,y:80},reach:32},{id:'cafe_exit',kind:'exit-door',label:'出口',x:240,y:246,approach:{x:240,y:220},reach:32,interactionRadius:32}];this.createIndoorSprites();this.createRumorTableSprite();this.setTopbar('承保咖啡馆 · 室内','去承保桌，开始今天的接单');if(!this.visitedFlags.marketOpened){marketGuide.style.left='300px';marketGuide.style.top='178px';marketGuide.classList.add('show')}else marketGuide.classList.remove('show');if(!this.visitedFlags.cafeWelcome){this.visitedFlags.cafeWelcome=true;this.saveFlags();this.time.delayedCall(300,()=>this.openDialogue('劳埃德',['新来的？那边那张桌子，今天有四张单要出。坐过去就知道了。']))}}
       createIndoorSprites(){this.indoorSprites.forEach(s=>s.destroy());this.indoorSprites=[];const l=this.add.sprite(120,172,'lloyd',0).setOrigin(.5,1).setDepth(7).play('lloyd-loop');const e=this.add.sprite(275,105,'demovre',0).setOrigin(.5,1).setTint(0xb4872d).setDepth(7).play('demovre-loop');const em=this.add.text(275,78,'✦ 见闻册',{font:'11px NotoPixelCN',color:'#f0cf7a',stroke:'#21160f',strokeThickness:3}).setOrigin(.5).setDepth(9);const d=this.add.sprite(410,139,'demovre',0).setOrigin(.5,1).setDepth(7).play('demovre-loop');const o=this.add.sprite(335,137,'shipowner',0).setOrigin(.5,1).setDepth(7).play('shipowner-loop');const x=this.add.sprite(190,135,'shipowner',0).setOrigin(.5,1).setTint(0x8c3a2e).setDepth(7).play('shipowner-loop');const c=this.add.sprite(175,100,'lloyd',0).setOrigin(.5,1).setTint(0x24486b).setDepth(7).play('lloyd-loop');const f=this.add.sprite(240,47,'fireplace',0).setDepth(6).play('fire-loop');const a=this.add.sprite(175,74,'indoor-lamp',0).setDepth(6).play('indoor-lamp-loop');const b=this.add.sprite(310,74,'indoor-lamp',0).setDepth(6).play('indoor-lamp-loop');this.indoorSprites=[l,e,d,o,x,c,f,a,b,em];this.npcSpriteRefs={lloyd:l,eve:e,demovre:d,shipowner:o,xiaolei:x,clerk:c}}
       setTopbar(place,goal){const task=document.getElementById('life-task-panel');if(task)task.textContent=`当前目标：${goal||'继续探索港口'}`}
       updateWorldSigns(){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const scrollX=this.cameras?.main?.scrollX||0;const positions={cafe:[1000,78],office:[250,68],archive:[612,68],board:[1110,120]};document.querySelectorAll('#ui-layer .sign').forEach(el=>{const p=positions[el.id.replace('-sign','')];el.style.display=this.location==='street'?'block':'none';if(!p)return;el.style.left=`${(p[0]-scrollX)*zoom}px`;el.style.top=`${p[1]*zoom}px`;el.style.fontSize=`${(el.id==='cafe-sign'?10:9)*zoom}px`})}
@@ -817,6 +817,11 @@
         render();
       }
       function scheduleFor(id,period=state.time.period){return schedules[id]?.[period]||schedules[id]?.morning}
+      /* 场景维度：NPC 状态/日程的 mapId 必须与当前场景精确匹配才生效。
+       * street=港口街道；interior=承保咖啡馆室内（sceneId==='castle_cafe' 或底图 cafe-interior）；
+       * 未来其他室内场景使用各自的 sceneId/底图/新 location，不会继承咖啡馆坐标与可见性。 */
+      function isCafeInteriorScene(s){return !!(s&&s.location==='interior'&&(s.sceneId==='castle_cafe'||(s.map&&s.map.texture&&s.map.texture.key==='cafe-interior')))}
+      function npcMapMatches(mapId,s){return mapId==='street'?!!(s&&s.location==='street'):mapId==='interior'?isCafeInteriorScene(s):!!(s&&mapId===s.location)}
       function spawnPoint(mapId){return mapId==='street'?{x:756,y:166}:{x:240,y:220}}
       function updateNpcSchedule(s,retarget=false){
         ensureNpcState();
@@ -835,12 +840,12 @@
           }
         });
         if(!s)return;
-        if(s.location==='interior'&&s.npcSpriteRefs?.lloyd){s.npcSpriteRefs.lloyd.setVisible(state.npcStates.lloyd.mapId==='interior');s.npcSpriteRefs.xiaolei?.setVisible(state.npcStates.xiaolei.mapId==='interior')}
-        if(s.location==='street'&&s.lifeNpcSprites){Object.entries(s.lifeNpcSprites).forEach(([id,sprite])=>sprite.setVisible(state.npcStates[id].mapId==='street'))}
+        if(isCafeInteriorScene(s)&&s.npcSpriteRefs?.lloyd){s.npcSpriteRefs.lloyd.setVisible(npcMapMatches(state.npcStates.lloyd.mapId,s));s.npcSpriteRefs.xiaolei?.setVisible(npcMapMatches(state.npcStates.xiaolei.mapId,s))}
+        if(s.location==='street'&&s.lifeNpcSprites){Object.entries(s.lifeNpcSprites).forEach(([id,sprite])=>sprite.setVisible(npcMapMatches(state.npcStates[id].mapId,s)))}
         ['lloyd','xiaolei'].forEach(id=>{
           const task=s.interactables.find(o=>o.key===id);
           if(task){
-            if(state.npcStates[id].mapId===s.location){
+            if(npcMapMatches(state.npcStates[id].mapId,s)){
               task.x=state.npcStates[id].x;
               task.y=state.npcStates[id].y;
               task.approach={x:state.npcStates[id].x+24,y:state.npcStates[id].y};
@@ -855,19 +860,19 @@
         const step=(58*Math.min(delta,50))/1000;
         Object.entries(state.npcStates).forEach(([id,npc])=>{
           if(npc.mapId!==npc.targetMapId){npc.mapId=npc.targetMapId;npc.route=[];npc.routeIndex=0;const start=spawnPoint(npc.targetMapId);npc.x=start.x;npc.y=start.y}
-          if(npc.mapId===s.location){
+          if(npcMapMatches(npc.mapId,s)){
             if(!npc.route?.length&&Math.hypot(npc.targetX-npc.x,npc.targetY-npc.y)>1){npc.route=s.gridPath({x:npc.targetX,y:npc.targetY},{x:npc.x,y:npc.y},id);npc.routeIndex=0}
             const node=npc.route?.[npc.routeIndex];const tx=node?.x??npc.targetX,ty=node?.y??npc.targetY,dx=tx-npc.x,dy=ty-npc.y,d=Math.hypot(dx,dy);
             if(d<=step){npc.x=tx;npc.y=ty;if(npc.route?.length&&npc.routeIndex<npc.route.length-1)npc.routeIndex++;else npc.route=[]}else if(d>1){const nx=npc.x+dx/d*step,ny=npc.y+dy/d*step;if(!s.isBlocked(nx,ny,id)){npc.x=nx;npc.y=ny}else npc.route=[];npc.facing=Math.abs(dx)>Math.abs(dy)?(dx<0?'left':'right'):(dy<0?'up':'down')}
           }
           const sprite=s.location==='street'?s.lifeNpcSprites?.[id]:s.npcSpriteRefs?.[id];
-          if(sprite&&npc.mapId===s.location){
+          if(sprite&&npcMapMatches(npc.mapId,s)){
             sprite.setVisible(true);
             sprite.setPosition(npc.x,npc.y);
           }
           const task=s.interactables?.find(o=>o.key===id);
           if(task){
-            if(npc.mapId===s.location){
+            if(npcMapMatches(npc.mapId,s)){
               task.x=npc.x;
               task.y=npc.y;
               task.approach={x:npc.x+24,y:npc.y};
