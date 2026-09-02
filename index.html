@@ -427,6 +427,13 @@
       exitCafe(){this.transitioning=true;this.isMoving=false;this.target=null;this.pending=null;this.route=[];this.doorReady=null;marketGuide.classList.remove('show');this.clearDialogue();this.cameras.main.fadeOut(180,0,0,0);this.time.delayedCall(200,()=>{this.setStreetScene(false);this.cameras.main.fadeIn(180);this.transitioning=false})}
       update(time,delta){this.updateWorldSigns();this.updateInteractionPrompt();if(this.transitioning||!this.isMoving||!this.target)return;const dt=Math.min(delta,50)/1000,dx=this.target.x-this.player.x,dy=this.target.y-this.player.y,distance=Math.hypot(dx,dy);if(distance<=GAME_BALANCE.walkSpeed*dt){this.player.setPosition(this.target.x,this.target.y);this.arrive();return}const step=GAME_BALANCE.walkSpeed*dt,nx=this.player.x+dx/distance*step,ny=this.player.y+dy/distance*step;if(this.isBlocked(nx,ny)){this.target=null;this.pending=null;this.route=[];this.routeIndex=0;this.arrive();return}this.player.setPosition(nx,ny)}
     }
+    /* ============================================================
+     * 风闻局（收敛后单一实现）
+     * 原为 v1 → 约束补丁 → v2 → v3 四代 prototype 覆盖链（部分方法被覆盖 4-5 次），
+     * 此处每个方法只保留最终生效的一份定义，旧版遮蔽层全部删除。
+     * 行为语义与收敛前完全一致：教程局（games===0）固定剧本，其余按种子生成；
+     * 生成链 = 基础生成 → 风险重掷修正 → 状态机字段/教程覆盖，已内联合并。
+     * ============================================================ */
     const rumorSeedNumber=seed=>{let h=2166136261;for(const ch of String(seed)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0};
     const rumorRng=seed=>{let t=rumorSeedNumber(seed);return()=>{t+=0x6D2B79F5;let r=t;r=Math.imul(r^r>>>15,r|1);r^=r+Math.imul(r^r>>>7,r|61);return((r^r>>>14)>>>0)/4294967296}};
     const rumorPick=(rng,list)=>list[Math.floor(rng()*list.length)];
@@ -434,200 +441,72 @@
     PixelHarborScene.prototype.readRumorProfile=function(){try{const raw=window.__gameStore?.get?.('world.rumorProfile')||{};return{games:Number(raw.games)||0,handbook:{herd:raw.handbook?.herd||'unseen',cascade:raw.handbook?.cascade||'unseen',source:raw.handbook?.source||'unseen',independence:raw.handbook?.independence||'unseen',outcome:raw.handbook?.outcome||'unseen'},history:Array.isArray(raw.history)?raw.history:[],lastSeed:raw.lastSeed||null,rulesSeen:!!raw.rulesSeen}}catch(e){return{games:0,handbook:{herd:'unseen',cascade:'unseen',source:'unseen',independence:'unseen',outcome:'unseen'},history:[],lastSeed:null,rulesSeen:false}}};
     PixelHarborScene.prototype.saveRumorProfile=function(){window.__gameStore?.set?.('world.rumorProfile',{...this.rumorProfile});window.__gameStore?.scheduleSave?.()};
     PixelHarborScene.prototype.createRumorTableSprite=function(){if(this.rumorTableSprite)this.rumorTableSprite.destroy();const g=this.add.graphics().setDepth(6);g.fillStyle(0x211b17,1).fillRect(406,203,52,18);g.fillStyle(0x6b4a2f,1).fillRect(404,200,52,18);g.fillStyle(0xc9b283,1).fillRect(409,202,42,12);g.fillStyle(0xc89b3c,1).fillCircle(414,205,3).fillCircle(432,205,3).fillCircle(445,205,3);g.lineStyle(1,0x211b17,1).strokeRect(404,200,52,18);this.rumorTableSprite=g;this.indoorSprites.push(g)};
-    PixelHarborScene.prototype.createRumorRun=function(seed){const rng=rumorRng(seed),scenario=rumorPick(rng,RUMOR_CONFIG.scenarios);const names=rumorShuffle(rng,RUMOR_CONFIG.names).slice(0,3),routes=rumorShuffle(rng,RUMOR_CONFIG.routes).slice(0,3);const dangerIndexes=(()=>{if(scenario.key==='different')return[];if(scenario.danger===2)return[0,2];return[Math.floor(rng()*3)]})();const safeIndexes=[0,1,2].filter(i=>!dangerIndexes.includes(i));const crowdTarget=scenario.crowd==='danger'?(dangerIndexes[0]??0):(safeIndexes[0]??0);const primaryTarget=dangerIndexes[0]??crowdTarget;const cause=rumorPick(rng,RUMOR_CONFIG.causes);const ships=names.map((name,index)=>({id:`ship-${index}`,name,route:routes[index],value:Math.floor(70+rng()*81),owner:['“这条线我跑熟了，明早就走。”','“货已经上船，只差一个点头。”','“码头的人都说海面平静。”'][index],danger:dangerIndexes.includes(index),cause:index===primaryTarget?cause:'没有被证实的风险',result:dangerIndexes.includes(index)?(rng()>.5?'事故':'被迫改道'):(rng()>.65?'延误':'平安返航')}));const primary=ships[primaryTarget];const messages=[{id:'broker',role:'消息贩子',target:crowdTarget,text:`“现在整间店都在传：${ships[crowdTarget].name} 的航线不稳。”`,level:scenario.key==='stale'?'过时消息':'普通传闻',origin:scenario.sameSource?'dockhand':'broker',quality:'low'},{id:'veteran',role:'老承保人',target:crowdTarget,text:`“我手里没新消息，不过几个人都盯着 ${ships[crowdTarget].name}。”`,level:scenario.sameSource?'二手转述':'普通传闻',origin:scenario.sameSource?'dockhand':'veteran',quality:'low'},{id:'xiaolei',role:'小蕾',target:scenario.key==='minority'?primaryTarget:crowdTarget,text:scenario.key==='minority'?`“我只看过一页登记：${primary.name} 昨夜有一笔不寻常的记录。”`:`“人多不是证据。先问问他们的消息是不是同一个源头。”`,level:scenario.key==='minority'?'一手记录':'二手转述',origin:scenario.key==='minority'?'ledger':'xiaolei',quality:scenario.key==='minority'?'high':'medium'},{id:'owner',role:'船东',target:primaryTarget,text:`“${primary.name} 最近五趟都平安，这话我没说假。”`,level:'利益相关陈述',origin:'owner',quality:'medium'},{id:'clerk',role:'账房先生',target:primaryTarget,text:scenario.key==='stale'?'“那张天气预警的日期，已经是三天前了。”':'“你听见了几个人的声音，数过有几份证据吗？”',level:'一手记录',origin:'ledger',quality:'high'}];const order=rumorShuffle(rng,messages.filter(m=>m.id!=='clerk')).concat(rng()>.45?[messages.find(m=>m.id==='clerk')]:[]);return{seed,scenario,ships,primaryTarget,dangerIndexes,crowdTarget,messages:order,phase:'home',visible:0,chips:2,actions:[],asked:[],verified:[],independent:false,shared:null,shareDecided:false,selectedAction:null,bets:null,decision:null,settled:false,timers:[]}};
+    PixelHarborScene.prototype.createRumorRun=function(seed){
+      const tutorial=(this.rumorProfile||this.readRumorProfile()).games===0;
+      /* 生成基础局：场景→三船→消息链（原 v1 层，逐字保留） */
+      const rng=rumorRng(seed),scenario=rumorPick(rng,RUMOR_CONFIG.scenarios);const names=rumorShuffle(rng,RUMOR_CONFIG.names).slice(0,3),routes=rumorShuffle(rng,RUMOR_CONFIG.routes).slice(0,3);const dangerIndexes=(()=>{if(scenario.key==='different')return[];if(scenario.danger===2)return[0,2];return[Math.floor(rng()*3)]})();const safeIndexes=[0,1,2].filter(i=>!dangerIndexes.includes(i));const crowdTarget=scenario.crowd==='danger'?(dangerIndexes[0]??0):(safeIndexes[0]??0);const primaryTarget=dangerIndexes[0]??crowdTarget;const cause=rumorPick(rng,RUMOR_CONFIG.causes);const ships=names.map((name,index)=>({id:`ship-${index}`,name,route:routes[index],value:Math.floor(70+rng()*81),owner:['“这条线我跑熟了，明早就走。”','“货已经上船，只差一个点头。”','“码头的人都说海面平静。”'][index],danger:dangerIndexes.includes(index),cause:index===primaryTarget?cause:'没有被证实的风险',result:dangerIndexes.includes(index)?(rng()>.5?'事故':'被迫改道'):(rng()>.65?'延误':'平安返航')}));const primary=ships[primaryTarget];const messages=[{id:'broker',role:'消息贩子',target:crowdTarget,text:`“现在整间店都在传：${ships[crowdTarget].name} 的航线不稳。”`,level:scenario.key==='stale'?'过时消息':'普通传闻',origin:scenario.sameSource?'dockhand':'broker',quality:'low'},{id:'veteran',role:'老承保人',target:crowdTarget,text:`“我手里没新消息，不过几个人都盯着 ${ships[crowdTarget].name}。”`,level:scenario.sameSource?'二手转述':'普通传闻',origin:scenario.sameSource?'dockhand':'veteran',quality:'low'},{id:'xiaolei',role:'小蕾',target:scenario.key==='minority'?primaryTarget:crowdTarget,text:scenario.key==='minority'?`“我只看过一页登记：${primary.name} 昨夜有一笔不寻常的记录。”`:`“人多不是证据。先问问他们的消息是不是同一个源头。”`,level:scenario.key==='minority'?'一手记录':'二手转述',origin:scenario.key==='minority'?'ledger':'xiaolei',quality:scenario.key==='minority'?'high':'medium'},{id:'owner',role:'船东',target:primaryTarget,text:`“${primary.name} 最近五趟都平安，这话我没说假。”`,level:'利益相关陈述',origin:'owner',quality:'medium'},{id:'clerk',role:'账房先生',target:primaryTarget,text:scenario.key==='stale'?'“那张天气预警的日期，已经是三天前了。”':'“你听见了几个人的声音，数过有几份证据吗？”',level:'一手记录',origin:'ledger',quality:'high'}];const order=rumorShuffle(rng,messages.filter(m=>m.id!=='clerk')).concat(rng()>.45?[messages.find(m=>m.id==='clerk')]:[]);const run={seed,scenario,ships,primaryTarget,dangerIndexes,crowdTarget,messages:order,phase:'home',visible:0,chips:2,actions:[],asked:[],verified:[],independent:false,shared:null,shareDecided:false,selectedAction:null,bets:null,decision:null,settled:false,timers:[]};
+      /* 风险重掷修正：独立种子保证剧本成立（原约束补丁层） */
+      const riskRng=rumorRng(`${seed}-risk-fix`);
+            const riskDanger=scenario.danger===0?[]:scenario.danger===2?[0,2]:[Math.floor(riskRng()*3)];
+            run.dangerIndexes=riskDanger;
+            run.ships.forEach((ship,index)=>{
+              ship.danger=riskDanger.includes(index);
+              ship.result=ship.danger?(riskRng()>.5?'事故':'被迫改道'):(riskRng()>.65?'延误':'平安返航');
+            });
+            run.primaryTarget=riskDanger[0]??run.crowdTarget;
+            const riskPrimary=run.ships[run.primaryTarget];
+            run.messages.forEach(message=>{
+              if(message.id==='owner'){
+                message.target=run.primaryTarget;
+                message.text=`“${riskPrimary.name} 最近五趟都平安，这话我没说假。”`;
+              }
+              if(message.id==='xiaolei'&&scenario.key==='minority'){
+                message.target=run.primaryTarget;
+                message.text=`“我只看过一页登记：${riskPrimary.name} 昨夜有一笔不寻常的记录。”`;
+              }
+            });
+            run.shared=false;
+            run.sharedBeforeRoundTwo=false;
+            run.shareDecided=false;
+            run.shareDecision=null;
+            run.privateClue=`私人线索：昨夜修船厂的登记提到，有一艘船临时停靠过；它未必危险，但值得与其他消息核对。`;
+      /* 状态机字段 + 教程局固定剧本（原 v2 层） */
+            run.phase='ships';run.visible=0;run.pendingChoice=null;run.investigationResult='';run.tutorial=tutorial;
+            run.roundOneMessage=null;run.roundTwoMessage=null;run.judgementRevealed=false;
+      if(!tutorial)return run;
+            run.scenario={key:'tutorial-crowd-wrong',label:'错误的多数',danger:1,crowd:'safe',sameSource:true};
+            run.dangerIndexes=[1];run.primaryTarget=1;run.crowdTarget=0;
+            run.ships=[
+              {id:'ship-0',name:'白礁号',route:'灰湾—北岬',value:96,owner:'“北岬有风？码头上人人都这么说。”',danger:false,cause:'没有被证实的风险',result:'平安返航'},
+              {id:'ship-1',name:'灰隼号',route:'灰湾—北岬',value:118,owner:'“我明早就走，船况没有问题。”',danger:true,cause:'船长临时更换，且缺少北岬经验',result:'事故'},
+              {id:'ship-2',name:'晨潮号',route:'铜湾—鸢尾岛',value:82,owner:'“货已经上船，只差一个点头。”',danger:false,cause:'没有被证实的风险',result:'延误'}
+            ];
+            run.messages=[
+              {id:'broker',role:'消息贩子',target:0,text:'“白礁号要走北岬？现在整间店都在传那边有风。”',level:'普通传闻',origin:'dockhand',quality:'low',reason:'“我只是听码头水手提过。”'},
+              {id:'veteran',role:'老承保人',target:0,text:'“既然大家都盯着白礁号，我也觉得它最该小心。”',level:'二手转述',origin:'dockhand',quality:'low',reason:'“我手里没有新记录。”'},
+              {id:'xiaolei',role:'小蕾',target:1,text:'“人多不是证据。灰隼号的船长登记，最好查一查。”',level:'一手记录',origin:'ledger',quality:'high',reason:'“我只信修船厂的登记。”'},
+              {id:'owner',role:'船东',target:0,text:'“我看白礁号也悬，还是离它远点吧。”',level:'二手转述',origin:'dockhand',quality:'low',reason:'“店里的人都这么说。”'}
+            ];
+            run.privateClue='灰隼号的泊位号昨夜出现在修船厂登记角。它不是结论，只是一条值得追问的线索。';
+      return run;
+    };
     PixelHarborScene.prototype.resetRumorUI=function(){const stage=document.getElementById('rumor-stage');stage.innerHTML='';if(this.rumor?.timers)this.rumor.timers.forEach(id=>clearTimeout(id));if(this.rumor)this.rumor.timers=[]};
-    PixelHarborScene.prototype.openRumorBureau=function(){this.clearDialogue();this.panelOpen=true;this.rumorProfile=this.rumorProfile||this.readRumorProfile();if(!this.rumor)this.rumor={phase:'home',timers:[]};rumorPanel.classList.add('show');this.setTopbar('承保咖啡馆 · 室内','风闻局｜目标：查看今日风闻');this.renderRumor()};
     PixelHarborScene.prototype.closeRumorBureau=function(){this.resetRumorUI();if(this.rumor?.settled)this.rumor={phase:'home',timers:[]};this.panelOpen=false;rumorPanel.classList.remove('show');this.setTopbar('承保咖啡馆 · 室内','去承保桌，开始今天的接单')};
-    PixelHarborScene.prototype.startRumorRun=function(){const seed=`rumor-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;this.resetRumorUI();this.rumor=this.createRumorRun(seed);this.rumor.phase='briefing';this.renderRumor()};
-    PixelHarborScene.prototype.rumorMessageHtml=function(m,canAsk){const asked=this.rumor.asked.includes(m.id);return`<div class="rumor-message"><strong>${m.role}</strong>：${m.text}${asked?`<br><small>来源等级：${m.level}${this.rumor.sameSourceFound&&m.origin==='dockhand'?'｜与另一条消息可能同源':''}</small>`:''}${canAsk&&!asked?`<button class="rumor-button tiny-action" data-rumor-action="ask" data-message="${m.id}">追问来源</button>`:''}</div>`};
-    PixelHarborScene.prototype.renderRumor=function(){const r=this.rumor,p=this.rumorProfile||this.readRumorProfile(),stage=document.getElementById('rumor-stage'),progress=document.getElementById('rumor-progress');if(!r)return;const set=(html,goal)=>{stage.innerHTML=html;progress.textContent=goal;this.setTopbar('承保咖啡馆 · 室内',goal)};if(r.phase==='home'){const known=Object.values(p.handbook).filter(x=>x!=='unseen').length;set(`<div class="rumor-home"><h3>风闻局</h3><p>三艘船，几条消息。别急着听人多的。</p><div class="rumor-summary">已完成局数：${p.games}｜已识别现象：${known} / 5</div><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="start">开始新一局</button><button class="rumor-button" data-rumor-action="handbook">查看风闻手册</button><button class="rumor-button" data-rumor-action="close">返回咖啡馆</button></div></div>`,'风闻局｜目标：查看今日风闻');return}if(r.phase==='handbook'){const states=RUMOR_CONFIG.handbook.map(([id,label])=>`<span class="rumor-state ${p.handbook[id]}">${label}｜${p.handbook[id]==='unseen'?'未发现':p.handbook[id]==='seen'?'已经见过':'已能运用'}</span>`).join('');set(`<div class="rumor-handbook"><h3>风闻手册</h3><p>消息会重复，证据不会自动变多。</p>${states}<div class="rumor-primary-bar"><button class="rumor-primary" data-rumor-action="home">返回风闻局首页</button></div></div>`,'风闻局｜目标：查看风闻手册');return}if(r.phase==='final'){set(`<div class="rumor-final"><h3>风闻局 · 本局收摊</h3><p>三艘船已经离港。消息、来源与判断过程已经记入风闻手册。</p><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="start">再开一局</button><button class="rumor-button" data-rumor-action="handbook">查看风闻手册</button><button class="rumor-button" data-rumor-action="close">返回咖啡馆</button></div></div>`,'风闻局｜目标：选择下一步');return}if(r.phase==='replay'){this.renderRumorReplay();return}const firstRound=['briefing','round1','action1'].includes(r.phase),visible=r.messages.slice(0,firstRound?Math.min(2,r.messages.length):r.messages.length),actions=['action1','action2'].includes(r.phase),bets=r.phase==='bets'||r.phase==='decision'||r.phase==='voyage';const ships=r.ships.map((s,i)=>`<article class="rumor-ship-card"><div class="ship-model"></div><b>${s.name}</b><small>${s.route}</small><p>${s.owner}</p><span class="rumor-risk ${r.phase==='voyage'?'revealed':''}">${r.phase==='voyage'?s.result:'真实风险 · 面朝下'}</span>${r.phase==='decision'?`<button class="rumor-button tiny-action" data-rumor-choice="ship-${i}">警惕这艘船</button>`:''}</article>`).join('');let actionHtml='';if(actions){const targets=r.selectedAction==='ask'?visible.filter(m=>!r.asked.includes(m.id)).map(m=>`<button class="rumor-button" data-rumor-target="${m.id}">${m.role}的消息</button>`).join(''):r.selectedAction==='verify'?r.ships.map(s=>`<button class="rumor-button" data-rumor-target="${s.id}">核验${s.name}</button>`).join(''):'';actionHtml=`<div class="rumor-action-row"><button class="rumor-button" data-rumor-action="ask" ${r.chips<1?'disabled':''}>追问来源 · 1筹码</button><button class="rumor-button" data-rumor-action="verify" ${r.chips<1?'disabled':''}>核验档案 · 1筹码</button><button class="rumor-button" data-rumor-action="independent" ${r.chips<1?'disabled':''}>要求独立陈述 · 1筹码</button><button class="rumor-button" data-rumor-action="share" ${r.shareDecided?'disabled':''}>${r.shared?'已公开私人线索':'公开 / 保留线索'}</button></div>${targets?`<div class="rumor-targets"><b>${r.selectedAction==='ask'?'选择要追问的消息':'选择要核验的船只'}</b>${targets}</div>`:''}`}
-      const betsHtml=bets?`<div class="rumor-bets">${Object.entries(r.bets||{}).map(([role,target])=>`<span class="rumor-bet ${r.phase==='bets'?'':'face'}">${r.phase==='bets'?`${role} · 木牌面朝下`:`${role} → ${r.ships[target].name}`}</span>`).join('')}</div>`:'';const decisionHtml=r.phase==='decision'?`<div class="rumor-decision"><button class="rumor-button" data-rumor-choice="defer">暂缓承保</button></div>`:'';const primary={briefing:'开始听第一轮消息',round1:'使用一次行动机会',action1:'继续听第二轮消息',round2:'使用最后一次行动机会',action2:'揭开众人的筹码',bets:'翻开众人的木牌',decision:'请先选择一艘船或暂缓承保',voyage:'查看风闻回放'}[r.phase]||'继续';set(`<div class="rumor-board"><aside class="rumor-note"><h4>你的私人线索</h4><p>${r.ships[r.primaryTarget].name} 的泊位号昨夜出现在修船厂登记边角；它不是结论，只是一条值得追问的线索。</p><div class="rumor-chips">调查筹码：${'●'.repeat(r.chips)}${'○'.repeat(2-r.chips)}</div><small>${r.shared?'你已公开线索；只影响尚未发言的人。':r.shareDecided?'你选择保留线索。':'你可以公开，也可以保留这条线索。'}</small></aside><main><div class="rumor-ships">${ships}</div>${actionHtml}${decisionHtml}<div class="rumor-primary-bar"><button class="rumor-primary ${r.phase==='voyage'?'final':''}" data-rumor-action="advance" ${r.phase==='decision'?'disabled':''}>${primary}</button></div></main><aside class="rumor-person"><h4>桌边消息</h4>${visible.map(m=>this.rumorMessageHtml(m,actions)).join('')}${betsHtml}</aside></div>`,r.phase==='decision'?'风闻局｜目标：选择最值得警惕的船':r.phase==='replay'?'风闻局｜目标：查看消息是如何传开的':'风闻局 1/1｜目标：听完消息，再决定要不要追问')};
-    PixelHarborScene.prototype.rumorAction=function(action){const r=this.rumor;if(!r)return;if(action==='start'){this.startRumorRun();return}if(action==='close'){this.closeRumorBureau();return}if(action==='home'){this.resetRumorUI();this.rumor={phase:'home',timers:[]};this.renderRumor();return}if(action==='handbook'){r.phase='handbook';this.renderRumor();return}if(action==='ask'||action==='verify'){if(r.chips<1||!['action1','action2'].includes(r.phase))return;r.selectedAction=action;this.renderRumor();return}if(action==='independent'){if(r.chips<1||!['action1','action2'].includes(r.phase))return;r.chips--;r.independent=true;r.actions.push('independent');r.selectedAction=null;this.renderRumor();return}if(action==='share'){if(r.shareDecided)return;r.shareDecided=true;r.shared=true;r.actions.push('share');this.renderRumor();return}if(action==='advance'){if(r.phase==='briefing'){r.phase='round1'}else if(r.phase==='round1'){r.phase='action1'}else if(r.phase==='action1'){r.phase='round2'}else if(r.phase==='round2'){r.phase='action2'}else if(r.phase==='action2'){r.phase='bets';this.prepareRumorBets()}else if(r.phase==='bets'){r.phase='decision'}else if(r.phase==='voyage'){r.phase='replay'}this.renderRumor();return}};
-    PixelHarborScene.prototype.rumorTarget=function(id){const r=this.rumor;if(!r||!r.selectedAction||r.chips<1)return;if(r.selectedAction==='ask'){const msg=r.messages.find(m=>m.id===id);if(!msg||r.asked.includes(id))return;r.asked.push(id);r.actions.push(`ask:${id}`);r.chips--;const same=r.asked.map(x=>r.messages.find(m=>m.id===x)).filter(Boolean).some((m,i,a)=>a.some((n,j)=>j!==i&&n.origin===m.origin));if(same)r.sameSourceFound=true}else if(r.selectedAction==='verify'){const ship=r.ships.find(s=>s.id===id);if(!ship)return;r.verified.push(id);r.actions.push(`verify:${id}`);r.chips--;if(ship.danger)r.validEvidence=true}r.selectedAction=null;this.renderRumor()};
-    PixelHarborScene.prototype.prepareRumorBets=function(){const r=this.rumor;const cautious=r.scenario.key==='minority'?r.primaryTarget:r.crowdTarget;const follow=r.independent?((r.primaryTarget+1)%3):r.crowdTarget;r.bets={小蕾:cautious,'老承保人':follow,'消息贩子':r.crowdTarget,船东:r.primaryTarget};if(r.shared){r.bets.小蕾=r.primaryTarget;if(!r.independent)r.bets['老承保人']=r.primaryTarget}};
-    PixelHarborScene.prototype.rumorChoose=function(choice){const r=this.rumor;if(!r||r.phase!=='decision')return;r.decision=choice;if(choice==='defer'){r.deferQuality=!!r.validEvidence||r.verified.some(id=>r.ships.find(s=>s.id===id)?.danger)}this.resolveRumorRun()};
-    PixelHarborScene.prototype.applyRumorLearning=function(){const r=this.rumor,p=this.rumorProfile,old={...p.handbook};const crowdWrong=!r.ships[r.crowdTarget].danger;const crowdMatches=r.decision===`ship-${r.crowdTarget}`;const independentDecision=r.decision!==`ship-${r.crowdTarget}`||r.validEvidence||r.independent;const setSeen=id=>{if(p.handbook[id]==='unseen')p.handbook[id]='seen'};const setApplied=(id,ok)=>{if(old[id]==='seen'&&ok&&independentDecision)p.handbook[id]='applied'};if(crowdWrong&&crowdMatches)setSeen('herd');if(r.scenario.sameSource)setSeen('cascade');if(r.asked.length||r.verified.length)setSeen('source');if(r.sameSourceFound||r.scenario.sameSource)setSeen('independence');if(r.scenario.sameSource&&(r.decision===`ship-${r.primaryTarget}`||crowdMatches))setSeen('outcome');setApplied('herd',r.independent&&r.scenario.sameSource);setApplied('cascade',r.sameSourceFound&&r.scenario.sameSource);setApplied('source',r.verified.some(id=>r.ships.find(s=>s.id===id)?.danger));setApplied('independence',r.independent&&r.scenario.sameSource);setApplied('outcome',(r.validEvidence||r.sameSourceFound)&&r.decision!==`ship-${r.crowdTarget}`);p.games++;p.lastSeed=r.seed;p.history.push({seed:r.seed,scenario:r.scenario.label,decision:r.decision,risks:r.ships.filter(s=>s.danger).map(s=>s.name),actions:r.actions});p.history=p.history.slice(-12);this.saveRumorProfile()};
-    PixelHarborScene.prototype.resolveRumorRun=function(){const r=this.rumor;if(r.settled)return;r.settled=true;r.phase='voyage';this.applyRumorLearning();this.renderRumor()};
-    PixelHarborScene.prototype.renderRumorReplay=function(){const r=this.rumor,p=this.rumorProfile;const risks=r.ships.filter(s=>s.danger);const feedback=[];if(r.verified.length)feedback.push('✓ 你核验过具体档案，而不是只听桌边声音。');if(r.sameSourceFound)feedback.push('✓ 你分别追问后，发现至少两条消息可能同源。');if(r.independent&&r.scenario.sameSource)feedback.push('✓ 你要求独立陈述，打断了可能的跟随链。');if(r.decision===`ship-${r.crowdTarget}`&&r.scenario.sameSource)feedback.push('△ 你最后仍把多数声音当成了主要依据。');if(r.decision==='defer')feedback.push(r.deferQuality?'✓ 你有有效风险依据后选择了暂缓。':'△ 你选择暂缓，但没有留下足够的风险依据；它不会自动成为高质量判断。');if(!feedback.length)feedback.push('— 这局没有足够的行动记录来判断你的依据。');const chain=r.messages.map(m=>`<div class="chain-line">${m.origin==='dockhand'?'码头水手 → ':m.origin==='ledger'?'航运登记册 → ':''}${m.role}：${m.level}${m.origin==='dockhand'?'｜与其他消息同源':''}</div>`).join('');const riskText=risks.length?risks.map(s=>`${s.name}（${s.cause}）`).join('、'):'本局没有重大风险；桌边的恐慌大过了事实。';document.getElementById('rumor-stage').innerHTML=`<div class="rumor-replay"><h3>风闻回放</h3><div class="rumor-summary"><b>真实情况：</b>${riskText}</div><h4>消息是如何传开的</h4><div class="rumor-chain">${chain}</div><h4>本局判断留下了什么</h4><div class="rumor-feedback">${feedback.map(x=>`<p>${x}</p>`).join('')}</div><div class="rumor-primary-bar"><button class="rumor-primary" data-rumor-action="handbook">查看风闻手册</button></div></div>`;document.getElementById('rumor-progress').textContent='风闻局｜目标：领取本局记录';this.setTopbar('承保咖啡馆 · 室内','风闻局｜目标：查看消息是如何传开的')};
-    /*
-      风闻局约束补丁：这里覆盖首版原型中的几个行为，避免“点一下就破案”。
-      - 每局严格只有两枚调查筹码；公开/保留线索不消耗筹码，且只影响第二轮尚未发言者。
-      - 追问来源只揭示等级；必须分别追问同源的两条消息，才会出现“可能同源”。
-      - handbook.applied 必须建立在此前 seen、命中本局现象、且最终判断不依赖低质量多数之上。
-    */
-    const baseCreateRumorRun=PixelHarborScene.prototype.createRumorRun;
-    PixelHarborScene.prototype.createRumorRun=function(seed){
-      const run=baseCreateRumorRun.call(this,seed);
-      const scenario=run.scenario;
-      const rng=rumorRng(`${seed}-risk-fix`);
-      const dangerIndexes=scenario.danger===0?[]:scenario.danger===2?[0,2]:[Math.floor(rng()*3)];
-      run.dangerIndexes=dangerIndexes;
-      run.ships.forEach((ship,index)=>{
-        ship.danger=dangerIndexes.includes(index);
-        ship.result=ship.danger?(rng()>.5?'事故':'被迫改道'):(rng()>.65?'延误':'平安返航');
-      });
-      run.primaryTarget=dangerIndexes[0]??run.crowdTarget;
-      const primary=run.ships[run.primaryTarget];
-      run.messages.forEach(message=>{
-        if(message.id==='owner'){
-          message.target=run.primaryTarget;
-          message.text=`“${primary.name} 最近五趟都平安，这话我没说假。”`;
-        }
-        if(message.id==='xiaolei'&&scenario.key==='minority'){
-          message.target=run.primaryTarget;
-          message.text=`“我只看过一页登记：${primary.name} 昨夜有一笔不寻常的记录。”`;
-        }
-      });
-      run.shared=false;
-      run.sharedBeforeRoundTwo=false;
-      run.shareDecided=false;
-      run.shareDecision=null;
-      run.privateClue=`私人线索：昨夜修船厂的登记提到，有一艘船临时停靠过；它未必危险，但值得与其他消息核对。`;
-      return run;
-    };
-
-    const baseRenderRumor=PixelHarborScene.prototype.renderRumor;
-    PixelHarborScene.prototype.renderRumor=function(){
-      baseRenderRumor.call(this);
-      const r=this.rumor;
-      if(!r)return;
-      const share=document.querySelector('#rumor-stage [data-rumor-action="share"]');
-      if(share){
-        share.textContent=r.shareDecided?(r.shared?'已公开私人线索':'已保留私人线索'):'公开私人线索';
-        if(r.phase==='action2'&&!r.shareDecided){
-          share.disabled=true;
-          share.textContent='公开线索（发言已结束）';
-        }
-        if(!r.shareDecided){
-          const keep=share.cloneNode(true);
-          keep.dataset.rumorAction='keep';
-          keep.textContent='保留私人线索';
-          if(r.phase==='action2'){keep.disabled=true;keep.textContent='保留线索（此局未决定）'}
-          share.insertAdjacentElement('afterend',keep);
-        }
-      }
-      const handbookButton=document.querySelector('#rumor-stage [data-rumor-action="home"]');
-      if(r.phase==='handbook'&&r.settled&&handbookButton){
-        handbookButton.dataset.rumorAction='final';
-        handbookButton.textContent='收下本局记录';
-      }
-    };
-
-    const baseRumorAction=PixelHarborScene.prototype.rumorAction;
-    PixelHarborScene.prototype.rumorAction=function(action,payload){
-      const r=this.rumor;
-      if(!r)return;
-      if(action==='keep'||action==='share'){
-        if(r.shareDecided||r.phase!=='action1')return;
-        r.shareDecided=true;
-        r.shared=action==='share';
-        r.shareDecision=action;
-        r.sharedBeforeRoundTwo=r.shared;
-        r.actions.push(action);
-        this.renderRumor();
-        return;
-      }
-      if(action==='final'){
-        r.phase='final';
-        this.renderRumor();
-        return;
-      }
-      return baseRumorAction.call(this,action);
-    };
-
-    PixelHarborScene.prototype.prepareRumorBets=function(){
-      const r=this.rumor;
-      const cautious=r.scenario.key==='minority'?r.primaryTarget:r.crowdTarget;
-      const follower=r.independent?((r.primaryTarget+1)%3):r.crowdTarget;
-      r.bets={小蕾:cautious,'老承保人':follower,'消息贩子':r.crowdTarget,船东:r.primaryTarget};
-      // 公开线索发生在第二轮发言前，才可能影响还未发言的角色；之后不回写他们的判断。
-      if(r.sharedBeforeRoundTwo){
-        r.bets.小蕾=r.primaryTarget;
-        if(!r.independent)r.bets['老承保人']=r.primaryTarget;
-      }
-    };
-
-    const baseApplyRumorLearning=PixelHarborScene.prototype.applyRumorLearning;
-    PixelHarborScene.prototype.applyRumorLearning=function(){
-      const r=this.rumor;
-      const profile=this.rumorProfile||this.readRumorProfile();
-      const before={...profile.handbook};
-      baseApplyRumorLearning.call(this);
-      const crowdChoice=`ship-${r.crowdTarget}`;
-      const reliesOnWeakCrowd=r.decision===crowdChoice&&r.scenario.sameSource&&!r.independent;
-      const verifiedRelevant=r.verified.some(id=>r.ships.find(ship=>ship.id===id)?.danger);
-      const hasPriorSeen=id=>before[id]==='seen'||before[id]==='applied';
-      // 首先记录“见过”。“已能运用”只在下一局满足所有条件时出现。
-      if(r.scenario.sameSource){
-        if(profile.handbook.herd==='unseen')profile.handbook.herd='seen';
-        if(profile.handbook.cascade==='unseen')profile.handbook.cascade='seen';
-        if(profile.handbook.independence==='unseen')profile.handbook.independence='seen';
-      }
-      if(r.asked.length||r.verified.length){
-        if(profile.handbook.source==='unseen')profile.handbook.source='seen';
-      }
-      if((r.decision&&r.decision!==crowdChoice)||r.deferQuality){
-        if(profile.handbook.outcome==='unseen')profile.handbook.outcome='seen';
-      }
-      if(hasPriorSeen('herd')&&r.independent&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.herd='applied';
-      if(hasPriorSeen('cascade')&&r.sameSourceFound&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.cascade='applied';
-      if(hasPriorSeen('source')&&verifiedRelevant&&!reliesOnWeakCrowd)profile.handbook.source='applied';
-      if(hasPriorSeen('independence')&&r.independent&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.independence='applied';
-      if(hasPriorSeen('outcome')&&(verifiedRelevant||r.sameSourceFound||r.deferQuality)&&!reliesOnWeakCrowd)profile.handbook.outcome='applied';
-      this.rumorProfile=profile;
-      this.saveRumorProfile();
-    };
-
-    document.addEventListener('keydown',event=>{
-      if(!rumorPanel.classList.contains('show'))return;
-      if(event.key!=='Enter'&&event.code!=='Space')return;
-      const scene=window.pixelHarborScene;
-      const phase=scene?.rumor?.phase;
-      if(['briefing','round1','action1','round2','action2','bets','voyage'].includes(phase)){
-        event.preventDefault();
-        scene.rumorAction('advance');
-      }
-    });
-
-    /* 风闻局 v2：新手引导与逐步推理状态机。只训练“标记风险船”，不混入承保决策。 */
-    const rumorV1Create=PixelHarborScene.prototype.createRumorRun;
-    const rumorV1ApplyLearning=PixelHarborScene.prototype.applyRumorLearning;
-    PixelHarborScene.prototype.playRumorBell=function(){
-      try{const Ctx=window.AudioContext||window.webkitAudioContext;if(!Ctx)return;this.rumorAudio=this.rumorAudio||new Ctx();const c=this.rumorAudio,o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(740,c.currentTime);g.gain.setValueAtTime(.045,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.16);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.17)}catch(e){}
-    };
-    PixelHarborScene.prototype.createRumorRun=function(seed){
-      const first=(this.rumorProfile||this.readRumorProfile()).games===0;
-      const run=rumorV1Create.call(this,seed);
-      run.phase='ships';run.visible=0;run.pendingChoice=null;run.investigationResult='';run.tutorial=first;
-      run.roundOneMessage=null;run.roundTwoMessage=null;run.judgementRevealed=false;
-      if(!first)return run;
-      run.scenario={key:'tutorial-crowd-wrong',label:'错误的多数',danger:1,crowd:'safe',sameSource:true};
-      run.dangerIndexes=[1];run.primaryTarget=1;run.crowdTarget=0;
-      run.ships=[
-        {id:'ship-0',name:'白礁号',route:'灰湾—北岬',value:96,owner:'“北岬有风？码头上人人都这么说。”',danger:false,cause:'没有被证实的风险',result:'平安返航'},
-        {id:'ship-1',name:'灰隼号',route:'灰湾—北岬',value:118,owner:'“我明早就走，船况没有问题。”',danger:true,cause:'船长临时更换，且缺少北岬经验',result:'事故'},
-        {id:'ship-2',name:'晨潮号',route:'铜湾—鸢尾岛',value:82,owner:'“货已经上船，只差一个点头。”',danger:false,cause:'没有被证实的风险',result:'延误'}
-      ];
-      run.messages=[
-        {id:'broker',role:'消息贩子',target:0,text:'“白礁号要走北岬？现在整间店都在传那边有风。”',level:'普通传闻',origin:'dockhand',quality:'low',reason:'“我只是听码头水手提过。”'},
-        {id:'veteran',role:'老承保人',target:0,text:'“既然大家都盯着白礁号，我也觉得它最该小心。”',level:'二手转述',origin:'dockhand',quality:'low',reason:'“我手里没有新记录。”'},
-        {id:'xiaolei',role:'小蕾',target:1,text:'“人多不是证据。灰隼号的船长登记，最好查一查。”',level:'一手记录',origin:'ledger',quality:'high',reason:'“我只信修船厂的登记。”'},
-        {id:'owner',role:'船东',target:0,text:'“我看白礁号也悬，还是离它远点吧。”',level:'二手转述',origin:'dockhand',quality:'low',reason:'“店里的人都这么说。”'}
-      ];
-      run.privateClue='灰隼号的泊位号昨夜出现在修船厂登记角。它不是结论，只是一条值得追问的线索。';
-      return run;
-    };
-
     PixelHarborScene.prototype.openRumorBureau=function(){
       this.clearDialogue();this.panelOpen=true;this.rumorProfile=this.rumorProfile||this.readRumorProfile();
       if(!this.rumor||this.rumor.phase==='home')this.rumor={phase:this.rumorProfile.games?'home':'guide',timers:[]};
       rumorPanel.classList.add('show');this.renderRumor();
+      const profile=this.rumorProfile||this.readRumorProfile();const bubble=document.getElementById('rumor-help-bubble');if(!profile.rulesSeen&&this.rumor?.phase==='home'){this.rumor.phase='guide';this.renderRumor()}if(!profile.rulesSeen&&this.rumor?.phase==='guide'){profile.rulesSeen=true;this.rumorProfile=profile;this.saveRumorProfile();bubble.hidden=false;this.rumor.rulesBubbleVisible=true;setTimeout(()=>{bubble.hidden=true},5000)}
     };
     PixelHarborScene.prototype.startRumorRun=function(){
+      const profile=this.rumorProfile||this.readRumorProfile();profile.rulesSeen=true;this.rumorProfile=profile;this.saveRumorProfile();document.getElementById('rumor-help-bubble').hidden=true;
       const seed=`rumor-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;this.resetRumorUI();this.rumor=this.createRumorRun(seed);this.renderRumor();
     };
+    PixelHarborScene.prototype.playRumorBell=function(){
+      try{const Ctx=window.AudioContext||window.webkitAudioContext;if(!Ctx)return;this.rumorAudio=this.rumorAudio||new Ctx();const c=this.rumorAudio,o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(740,c.currentTime);g.gain.setValueAtTime(.045,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.16);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.17)}catch(e){}
+    };
     PixelHarborScene.prototype.rumorStageGoal=function(phase){
-      return ({guide:'风闻局｜目标：理解这一局要做什么',home:'风闻局｜目标：查看今日风闻',ships:'风闻局｜查看三艘船',round1:'风闻局｜第一轮消息',investigate1:'风闻局｜调查第一轮消息',afterInvestigate1:'风闻局｜目标：听第二轮消息',round2:'风闻局｜第二轮消息',investigate2:'风闻局｜调查第二轮消息',judgementIntro:'风闻局｜众人判断',judgement:'风闻局｜众人判断',decision:'风闻局｜标记风险',confirm:'风闻局｜确认标记',voyage:'风闻局｜航行揭晓',replay:'风闻局｜风闻回放',handbook:'风闻局｜知识记录',final:'风闻局｜选择下一步'})[phase]||'风闻局';
+      return ({guide:'风闻局｜目标：理解这一局要做什么',home:'风闻局｜目标：查看今日风闻',ships:'风闻局｜查看三艘船',round1:'风闻局｜第一轮消息',investigate1:'风闻局｜调查第一轮消息',afterInvestigate1:'风闻局｜目标：听第二轮消息',round2:'风闻局｜第二轮消息',investigate2:'风闻局｜调查第二轮消息',judgement:'风闻局｜众人判断',decision:'风闻局｜标记风险',confirm:'风闻局｜确认标记',voyage:'风闻局｜航行揭晓',replay:'风闻局｜风闻回放',handbook:'风闻局｜知识记录',final:'风闻局｜选择下一步'})[phase]||'风闻局';
     };
     PixelHarborScene.prototype.rumorShipCards=function(r,{selectable=false,revealed=false}={}){
       return r.ships.map((ship,index)=>`<article class="rumor-ship-card ${r.pendingChoice===ship.id?'selected':''}"><div class="ship-model"></div><b>${ship.name}</b><small>${ship.route}</small><p>${ship.owner}</p><span class="rumor-risk ${revealed?'revealed':''}">${revealed?ship.result:'尚无风闻'}</span>${selectable?`<button class="rumor-button tiny-action" data-rumor-choice="${ship.id}">标记这艘船</button>`:''}</article>`).join('');
@@ -635,75 +514,13 @@
     PixelHarborScene.prototype.rumorMessageCard=function(message,highlight=false){
       return `<div class="rumor-message ${highlight?'rumor-speaker':''}"><strong>${message.role}</strong><p>${message.text}</p>${this.rumor.asked.includes(message.id)?`<small>来源等级：${message.level}${this.rumor.sameSourceFound&&message.origin==='dockhand'?'｜与另一条消息可能同源':''}</small>`:'<small>尚未追问来源</small>'}</div>`;
     };
-    PixelHarborScene.prototype.rumorInvestigationCard=function(r,second){
-      const targets=r.selectedAction==='ask'?(second?r.messages.slice(0,2):[r.messages[0]]).filter(m=>!r.asked.includes(m.id)).map(m=>`<button class="rumor-button" data-rumor-target="${m.id}">追问：${m.role}的消息</button>`).join(''):
-        r.selectedAction==='verify'?r.ships.map(s=>`<button class="rumor-button" data-rumor-target="${s.id}">核验：${s.name}的档案</button>`).join(''):'';
-      const actionButtons=r.selectedAction?`<div class="rumor-targets"><b>${r.selectedAction==='ask'?'选择要追问的消息':'选择要核验的船舶档案'}</b>${targets}</div>`:
-        `<div class="rumor-action-row"><button class="rumor-button" data-rumor-action="ask" ${r.chips<1?'disabled':''}>追问来源<br><small>分辨亲见、转述或传闻</small></button><button class="rumor-button" data-rumor-action="verify" ${r.chips<1?'disabled':''}>核验档案<br><small>确认一项具体事实</small></button>${second?`<button class="rumor-button" data-rumor-action="independent" ${r.chips<1?'disabled':''}>要求独立陈述<br><small>不让他们先看彼此选择</small></button>`:''}<button class="rumor-button" data-rumor-action="skipInvestigation">先不调查<br><small>把机会留给后面</small></button></div>`;
-      return `<section class="rumor-note"><h4>你只有两次调查机会</h4><p>每一次都可能改变你对船只的判断。</p><div class="rumor-chips">调查机会：${'●'.repeat(r.chips)}${'○'.repeat(2-r.chips)}</div>${r.investigationResult?`<div class="rumor-feedback">${r.investigationResult}</div>`:''}${actionButtons}</section>`;
-    };
-    PixelHarborScene.prototype.renderRumor=function(){
-      const r=this.rumor,p=this.rumorProfile||this.readRumorProfile(),stage=document.getElementById('rumor-stage'),progress=document.getElementById('rumor-progress');if(!r)return;
-      const render=(html)=>{stage.innerHTML=html;const goal=this.rumorStageGoal(r.phase);progress.textContent=goal;this.setTopbar('承保咖啡馆 · 室内',goal)};
-      const bar=(title,sub='')=>`<div class="rumor-primary-bar"><button class="rumor-primary" data-rumor-action="advance">${title}${sub?`<small>${sub}</small>`:''}</button></div>`;
-      if(r.phase==='guide'){render(`<div class="rumor-home rumor-guide"><h3>风闻局</h3><p>三艘船今晚都想出港。<br>每个人只知道一部分消息，有人说真话，也有人只是在跟风。<br><b>找出最值得警惕的一艘船。</b></p><div class="rumor-summary">听消息　→　查来源　→　标记风险船</div><div class="rumor-feedback">人多不等于证据多。</div><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="advance">开始这一局</button><button class="rumor-primary" data-rumor-action="rules">？ 先看看怎么玩</button></div></div>`);return}
-      if(r.phase==='home'){const known=Object.values(p.handbook).filter(v=>v!=='unseen').length;render(`<div class="rumor-home"><h3>风闻局</h3><p>本局目标：找出最值得警惕的船。</p><div class="rumor-summary">已完成局数：${p.games}｜已识别现象：${known} / 5</div><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="start">开始新一局</button><button class="rumor-button" data-rumor-action="handbook">查看规则与手册</button><button class="rumor-button" data-rumor-action="close">返回咖啡馆</button></div></div>`);return}
-      if(r.phase==='handbook'){const states=RUMOR_CONFIG.handbook.map(([id,label])=>`<span class="rumor-state ${p.handbook[id]}">${label}｜${p.handbook[id]==='unseen'?'未发现':p.handbook[id]==='seen'?'已经见过':'已能运用'}</span>`).join('');render(`<div class="rumor-handbook"><h3>风闻手册</h3><p>你通过看见现象、再在另一局中正确使用行动，才会把记录从“见过”写成“已能运用”。</p>${states}${bar(r.settled?'收下本局记录':'返回风闻局首页')}</div>`);return}
-      if(r.phase==='final'){render(`<div class="rumor-final"><h3>本局记录已保存</h3><p>下一局会带来新的船、新的消息和新的传播关系。</p><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="start">再开一局</button><button class="rumor-button" data-rumor-action="handbook">查看风闻手册</button><button class="rumor-button" data-rumor-action="close">返回咖啡馆</button></div></div>`);return}
-      if(r.phase==='replay'){this.renderRumorReplay();return}
-      const ships=this.rumorShipCards(r,{selectable:r.phase==='decision'});
-      const note=`<aside class="rumor-note"><h4>你偶然听见的线索</h4><p>${r.privateClue||`${r.ships[r.primaryTarget].name} 的泊位号昨夜出现在修船厂登记角。它不是结论，只是一条值得追问的线索。`}</p><div class="rumor-chips">本局还有 ${r.chips} 次调查机会　${'●'.repeat(r.chips)}${'○'.repeat(2-r.chips)}</div><small>可用来追问来源、核验档案，或要求众人独立表态。</small></aside>`;
-      const empty=`<aside class="rumor-person"><h4>桌边风闻</h4><p>消息还没有开始。先听听第一位说话的人。</p></aside>`;
-      if(r.phase==='ships'){render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div>${bar('听第一轮消息','有人会先说出他们听到的风闻。')}</main>${empty}</div>`);return}
-      if(r.phase==='round1'){const msg=r.messages[0];render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div>${bar('调查这条消息','你可以先问：这条消息从哪里来？')}</main><aside class="rumor-person"><h4><span class="rumor-bell"></span>第一轮消息</h4>${this.rumorMessageCard(msg,true)}<div class="rumor-feedback">这条风闻出现了。你觉得它值得相信吗？</div></aside></div>`);return}
-      if(r.phase==='investigate1'||r.phase==='investigate2'){const second=r.phase==='investigate2';const visible=second?r.messages.slice(0,2):[r.messages[0]];render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div>${this.rumorInvestigationCard(r,second)}</main><aside class="rumor-person"><h4>${second?'第二轮消息':'第一轮消息'}</h4>${visible.map((m,i)=>this.rumorMessageCard(m,i===visible.length-1)).join('')}</aside></div>`);return}
-      if(r.phase==='afterInvestigate1'){render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div><div class="rumor-feedback">${r.investigationResult||'你保留了调查机会。'}</div>${bar('听第二轮消息','另一条消息会让局面更清楚，也可能更混乱。')}</main><aside class="rumor-person"><h4>已听到的消息</h4>${this.rumorMessageCard(r.messages[0],true)}</aside></div>`);return}
-      if(r.phase==='round2'){const msg=r.messages[1];render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div>${bar('调查第二轮消息','决定是否需要再调查。')}</main><aside class="rumor-person"><h4>第二轮消息</h4>${this.rumorMessageCard(r.messages[0])}${this.rumorMessageCard(msg,true)}${r.messages[0].origin===msg.origin?'<div class="rumor-feedback">两张纸条用了相同颜色的蜡封；它们也许有关联。</div>':''}</aside></div>`);return}
-      if(r.phase==='judgementIntro'){render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div><div class="rumor-feedback"><b>消息已经传开。现在，每个人都要表态。</b><br>他们的选择不一定来自独立证据。${r.independent?'<br><br>本轮已启用独立陈述；他们看不到彼此选择。':''}</div>${bar('看看其他人怎么判断')}</main><aside class="rumor-person"><h4>桌边风闻</h4><p>木牌仍然背朝上。</p></aside></div>`);return}
-      if(r.phase==='judgement'){const bets=Object.entries(r.bets||{}).map(([role,target])=>`<div class="rumor-message"><strong>${role}</strong><p>最值得警惕：${r.ships[target].name}</p><small>${role==='小蕾'?'“我只信修船厂的记录。”':role==='老承保人'?'“大家都在说北岬有风。”':'“这条船东说得太急了。”'}</small></div>`).join('');render(`<div class="rumor-board">${note}<main><div class="rumor-ships">${ships}</div>${bar('轮到你标记风险')}</main><aside class="rumor-person"><h4>众人判断</h4>${bets}</aside></div>`);return}
-      if(r.phase==='decision'){render(`<div class="rumor-board">${note}<main><h3>轮到你标记风险</h3><p>根据你听到、核验和推断的消息，选出本局最值得警惕的一艘船。</p><div class="rumor-ships">${ships}</div></main><aside class="rumor-person"><h4>你的目标</h4><p>只标记一艘船。不要把谁说得响当成唯一理由。</p></aside></div>`);return}
-      if(r.phase==='confirm'){const ship=r.ships.find(s=>s.id===r.pendingChoice);render(`<div class="rumor-home"><h3>确认你的标记</h3><p>你准备标记：<b>${ship.name}</b></p><div class="rumor-feedback">你认为它最值得警惕。这个判断将影响本局复盘。</div><div class="rumor-action-row"><button class="rumor-button" data-rumor-action="cancelChoice">重新想想</button><button class="rumor-button" data-rumor-action="confirmChoice">确认标记</button></div></div>`);return}
-      if(r.phase==='voyage'){render(`<div class="rumor-replay"><h3>等待船只归港</h3><p>三艘船依次驶出灰湾，海面给出的结果不会倒推你的判断过程。</p><div class="rumor-ships">${this.rumorShipCards(r,{revealed:true})}</div>${bar('查看风闻回放')}</div>`);return}
-    };
-    PixelHarborScene.prototype.rumorAction=function(action){
-      const r=this.rumor;if(!r)return;
-      if(action==='close'){this.closeRumorBureau();return}if(action==='rules'){this.toggleRumorRules(true);return}if(action==='start'){this.startRumorRun();return}
-      if(action==='handbook'){r.phase='handbook';this.renderRumor();return}
-      if(action==='advance'){
-        const next={guide:'start',ships:'listen1',round1:'investigate1',afterInvestigate1:'listen2',round2:'investigate2',judgementIntro:'judgement',judgement:'decision',voyage:'replay',handbook:r.settled?'final':'home'}[r.phase];
-        if(next)return this.rumorAction(next);return;
-      }
-      if(action==='home'){this.rumor={phase:'home',timers:[]};this.renderRumor();return}
-      if(action==='listen1'){r.phase='round1';r.visible=1;this.playRumorBell();this.renderRumor();return}
-      if(action==='investigate1'){r.phase='investigate1';r.investigationResult='';this.renderRumor();return}
-      if(action==='listen2'){r.phase='round2';r.visible=2;this.playRumorBell();this.renderRumor();return}
-      if(action==='investigate2'){r.phase='investigate2';r.investigationResult='';this.renderRumor();return}
-      if(action==='ask'||action==='verify'){if(r.chips<1)return;r.selectedAction=action;this.renderRumor();return}
-      if(action==='independent'){if(r.chips<1)return;r.chips--;r.independent=true;r.actions.push('independent');r.investigationResult='你要求所有人独立陈述：他们会在看不到彼此选择时先作出判断。';r.phase='judgementIntro';this.prepareRumorBets();this.renderRumor();return}
-      if(action==='skipInvestigation'){r.investigationResult='你暂时保留了调查机会。';r.phase=r.phase==='investigate1'?'afterInvestigate1':'judgementIntro';if(r.phase==='judgementIntro')this.prepareRumorBets();this.renderRumor();return}
-      if(action==='judgement'){r.phase='judgement';this.renderRumor();return}
-      if(action==='decision'){r.phase='decision';this.renderRumor();return}
-      if(action==='cancelChoice'){r.pendingChoice=null;r.phase='decision';this.renderRumor();return}
-      if(action==='confirmChoice'){r.decision=r.pendingChoice;r.pendingChoice=null;this.resolveRumorRun();return}
-      if(action==='replay'){r.phase='replay';this.renderRumor();return}
-      if(action==='final'){r.phase='final';this.renderRumor();return}
-    };
-    PixelHarborScene.prototype.rumorTarget=function(id){
-      const r=this.rumor;if(!r||!r.selectedAction||r.chips<1)return;
-      if(r.selectedAction==='ask'){const msg=r.messages.find(m=>m.id===id);if(!msg||r.asked.includes(id))return;r.asked.push(id);r.actions.push(`ask:${id}`);r.investigationResult=`你追问了来源：这是一条“${msg.level}”。`;
-        const asked=r.asked.map(key=>r.messages.find(m=>m.id===key)).filter(Boolean);if(asked.some((m,i)=>asked.some((n,j)=>i!==j&&m.origin===n.origin))){r.sameSourceFound=true;r.investigationResult+=' 你分别追问后发现：两条消息可能同源。'}
-      }else{const ship=r.ships.find(s=>s.id===id);if(!ship)return;r.verified.push(id);r.actions.push(`verify:${id}`);r.validEvidence=r.validEvidence||ship.danger;r.investigationResult=ship.danger?`档案翻开：${ship.name} 确有一项需要警惕的记录，但这仍要和其他消息一起判断。`:`档案翻开：${ship.name} 的这项说法没有得到异常记录支持。`}
-      r.chips--;r.selectedAction=null;r.phase=r.phase==='investigate1'?'afterInvestigate1':'judgementIntro';if(r.phase==='judgementIntro')this.prepareRumorBets();this.renderRumor();
-    };
-    PixelHarborScene.prototype.rumorChoose=function(choice){const r=this.rumor;if(!r||r.phase!=='decision')return;r.pendingChoice=choice;r.phase='confirm';this.renderRumor()};
+    PixelHarborScene.prototype.rumorRulesStageText=function(phase){return ({guide:'现在先看看三艘船和你偶然听见的线索。',ships:'现在先看看三艘船和你偶然听见的线索。',round1:'消息刚出现。现在可以决定要不要调查。',investigate1:'现在可以追问来源、核验档案，或保留调查机会。',afterInvestigate1:'第二轮消息即将出现。注意它是否带来新证据。',round2:'消息更多了，但不一定更可靠。注意它们是否来自同一个源头。',investigate2:'现在可以进行第二次调查，也可以直接进入众人判断。',judgement:'别急着跟随多数。先想想：他们真的各自拥有证据吗？',decision:'请选择你认为最值得警惕的一艘船。',confirm:'请选择你认为最值得警惕的一艘船。',voyage:'现在看看船只结果，不要把结果倒推成判断过程。',replay:'现在回看：消息是怎样从一个人传到另一个人的？',handbook:'你可以查看本局记录与已经见过的现象。',final:'本局记录已经保存，可以开始下一局。'})[phase]||'根据当前阶段继续判断。'};
+    PixelHarborScene.prototype.toggleRumorRules=function(force){
+      const box=document.getElementById('rumor-rules'),visible=typeof force==='boolean'?force:box.hidden;
+      if(visible){const r=this.rumor||{phase:'guide'};box.innerHTML=`<button class="rumor-button rules-close" data-rumor-close>× 返回游戏</button><h2>风闻局怎么玩？</h2><h3>1. 你的目标</h3><p>找出最值得警惕的一艘船。三艘船即将出港，请根据听到的消息，标记你认为风险最高的一艘。</p><div class="rumor-rule-figure">⛵　⛵　⛵　　<span class="rumor-rule-stage">◆ 风险标记</span></div><h3>2. 怎么获得信息</h3><p>先听消息，再决定要不要调查。有人亲眼见过，有人只是听说，也有人会跟着别人一起说。</p><div class="rumor-rule-figure">角色纸条　→　船只档案</div><h3>3. 两次调查机会</h3><p>你有 2 次调查机会，可以用来：追问消息从哪里来、核验一项船只档案、要求众人独立表态。</p><div class="rumor-rule-figure">● ●　调查机会</div><p><b>调查机会用完后，仍然可以继续听消息和作出判断。</b></p><h3>4. 最重要的提醒</h3><p><b>人多，不等于证据多。</b> 两个人说同一件事，可能只是都听同一个人说过。</p><div class="rumor-rule-figure">一个源头　→　两条传闻</div><div class="rumor-feedback"><b>当前阶段：</b>${this.rumorRulesStageText(r.phase)}</div><button class="rumor-primary" data-rumor-close>明白了，回到当前阶段</button>`;box.hidden=false;return}box.hidden=true};
     PixelHarborScene.prototype.prepareRumorBets=function(){
       const r=this.rumor;const first=r.messages[0]?.target??r.crowdTarget;const second=r.messages[1]?.target??r.primaryTarget;
       r.bets={小蕾:r.scenario.key==='tutorial-crowd-wrong'?r.primaryTarget:second,'老承保人':r.independent?second:first,'消息贩子':first,船东:r.independent?r.primaryTarget:first};
-    };
-    PixelHarborScene.prototype.applyRumorLearning=function(){
-      const r=this.rumor,profile=this.rumorProfile||this.readRumorProfile();rumorV1ApplyLearning.call(this);
-      if(r.tutorial)profile.handbook.herd='seen';
-      this.rumorProfile=profile;this.saveRumorProfile();
     };
     PixelHarborScene.prototype.resolveRumorRun=function(){const r=this.rumor;if(r.settled)return;r.settled=true;r.phase='voyage';this.applyRumorLearning();this.renderRumor()};
     PixelHarborScene.prototype.renderRumorReplay=function(){
@@ -718,15 +535,39 @@
       document.getElementById('rumor-stage').innerHTML=`<div class="rumor-replay"><h3>这些消息是怎么传开的？</h3><div class="rumor-summary"><b>本局最值得警惕的船：</b>${risks.map(s=>s.name).join('、')||'没有一艘'}<br><b>真实风险：</b>${riskText}</div><div class="rumor-chain">${chain}</div><div class="rumor-feedback">${feedback.map(line=>`<p>${line}</p>`).join('')}</div><div class="rumor-primary-bar"><button class="rumor-primary" data-rumor-action="handbook">查看知识记录</button></div></div>`;
       const goal=this.rumorStageGoal('replay');document.getElementById('rumor-progress').textContent=goal;this.setTopbar('承保咖啡馆 · 室内',goal);
     };
-    PixelHarborScene.prototype.rumorRulesStageText=function(phase){return ({guide:'现在先看看三艘船和你偶然听见的线索。',ships:'现在先看看三艘船和你偶然听见的线索。',round1:'消息刚出现。现在可以决定要不要调查。',investigate1:'现在可以追问来源、核验档案，或保留调查机会。',afterInvestigate1:'第二轮消息即将出现。注意它是否带来新证据。',round2:'消息更多了，但不一定更可靠。注意它们是否来自同一个源头。',investigate2:'现在可以进行第二次调查，也可以直接进入众人判断。',judgementIntro:'别急着跟随多数。先想想：他们真的各自拥有证据吗？',judgement:'别急着跟随多数。先想想：他们真的各自拥有证据吗？',decision:'请选择你认为最值得警惕的一艘船。',confirm:'请选择你认为最值得警惕的一艘船。',voyage:'现在看看船只结果，不要把结果倒推成判断过程。',replay:'现在回看：消息是怎样从一个人传到另一个人的？',handbook:'你可以查看本局记录与已经见过的现象。',final:'本局记录已经保存，可以开始下一局。'})[phase]||'根据当前阶段继续判断。'};
-    PixelHarborScene.prototype.toggleRumorRules=function(force){
-      const box=document.getElementById('rumor-rules'),visible=typeof force==='boolean'?force:box.hidden;
-      if(visible){const r=this.rumor||{phase:'guide'};box.innerHTML=`<button class="rumor-button rules-close" data-rumor-close>× 返回游戏</button><h2>风闻局怎么玩？</h2><h3>1. 你的目标</h3><p>找出最值得警惕的一艘船。三艘船即将出港，请根据听到的消息，标记你认为风险最高的一艘。</p><div class="rumor-rule-figure">⛵　⛵　⛵　　<span class="rumor-rule-stage">◆ 风险标记</span></div><h3>2. 怎么获得信息</h3><p>先听消息，再决定要不要调查。有人亲眼见过，有人只是听说，也有人会跟着别人一起说。</p><div class="rumor-rule-figure">角色纸条　→　船只档案</div><h3>3. 两次调查机会</h3><p>你有 2 次调查机会，可以用来：追问消息从哪里来、核验一项船只档案、要求众人独立表态。</p><div class="rumor-rule-figure">● ●　调查机会</div><p><b>调查机会用完后，仍然可以继续听消息和作出判断。</b></p><h3>4. 最重要的提醒</h3><p><b>人多，不等于证据多。</b> 两个人说同一件事，可能只是都听同一个人说过。</p><div class="rumor-rule-figure">一个源头　→　两条传闻</div><div class="rumor-feedback"><b>当前阶段：</b>${this.rumorRulesStageText(r.phase)}</div><button class="rumor-primary" data-rumor-close>明白了，回到当前阶段</button>`;box.hidden=false;return}box.hidden=true};
-    const baseRumorOpen=PixelHarborScene.prototype.openRumorBureau;
-    PixelHarborScene.prototype.openRumorBureau=function(){baseRumorOpen.call(this);const profile=this.rumorProfile||this.readRumorProfile();const bubble=document.getElementById('rumor-help-bubble');if(!profile.rulesSeen&&this.rumor?.phase==='home'){this.rumor.phase='guide';this.renderRumor()}if(!profile.rulesSeen&&this.rumor?.phase==='guide'){profile.rulesSeen=true;this.rumorProfile=profile;this.saveRumorProfile();bubble.hidden=false;this.rumor.rulesBubbleVisible=true;setTimeout(()=>{bubble.hidden=true},5000)}};
-    const baseRumorStart=PixelHarborScene.prototype.startRumorRun;
-    PixelHarborScene.prototype.startRumorRun=function(){const profile=this.rumorProfile||this.readRumorProfile();profile.rulesSeen=true;this.rumorProfile=profile;this.saveRumorProfile();document.getElementById('rumor-help-bubble').hidden=true;baseRumorStart.call(this)};
-    /* 风闻局 v3：三轮消息 + 有结果的调查流程。旧版本方法保留作兼容，但最终由本段状态机接管。 */
+    PixelHarborScene.prototype.applyRumorLearning=function(){
+      const r=this.rumor,profile=this.rumorProfile||this.readRumorProfile();
+      const before={...profile.handbook};
+      /* 基础判定（原 v1 层，逐字保留） */
+      const p=profile,old={...p.handbook};const crowdWrong=!r.ships[r.crowdTarget].danger;const crowdMatches=r.decision===`ship-${r.crowdTarget}`;const independentDecision=r.decision!==`ship-${r.crowdTarget}`||r.validEvidence||r.independent;const setSeen=id=>{if(p.handbook[id]==='unseen')p.handbook[id]='seen'};const setApplied=(id,ok)=>{if(old[id]==='seen'&&ok&&independentDecision)p.handbook[id]='applied'};if(crowdWrong&&crowdMatches)setSeen('herd');if(r.scenario.sameSource)setSeen('cascade');if(r.asked.length||r.verified.length)setSeen('source');if(r.sameSourceFound||r.scenario.sameSource)setSeen('independence');if(r.scenario.sameSource&&(r.decision===`ship-${r.primaryTarget}`||crowdMatches))setSeen('outcome');setApplied('herd',r.independent&&r.scenario.sameSource);setApplied('cascade',r.sameSourceFound&&r.scenario.sameSource);setApplied('source',r.verified.some(id=>r.ships.find(s=>s.id===id)?.danger));setApplied('independence',r.independent&&r.scenario.sameSource);setApplied('outcome',(r.validEvidence||r.sameSourceFound)&&r.decision!==`ship-${r.crowdTarget}`);p.games++;p.lastSeed=r.seed;p.history.push({seed:r.seed,scenario:r.scenario.label,decision:r.decision,risks:r.ships.filter(s=>s.danger).map(s=>s.name),actions:r.actions});p.history=p.history.slice(-12);this.saveRumorProfile()
+      /* 修正判定：applied 需前局 seen + 本局命中 + 不依赖弱多数（原约束补丁层） */
+            const crowdChoice=`ship-${r.crowdTarget}`;
+            const reliesOnWeakCrowd=r.decision===crowdChoice&&r.scenario.sameSource&&!r.independent;
+            const verifiedRelevant=r.verified.some(id=>r.ships.find(ship=>ship.id===id)?.danger);
+            const hasPriorSeen=id=>before[id]==='seen'||before[id]==='applied';
+            // 首先记录“见过”。“已能运用”只在下一局满足所有条件时出现。
+            if(r.scenario.sameSource){
+              if(profile.handbook.herd==='unseen')profile.handbook.herd='seen';
+              if(profile.handbook.cascade==='unseen')profile.handbook.cascade='seen';
+              if(profile.handbook.independence==='unseen')profile.handbook.independence='seen';
+            }
+            if(r.asked.length||r.verified.length){
+              if(profile.handbook.source==='unseen')profile.handbook.source='seen';
+            }
+            if((r.decision&&r.decision!==crowdChoice)||r.deferQuality){
+              if(profile.handbook.outcome==='unseen')profile.handbook.outcome='seen';
+            }
+            if(hasPriorSeen('herd')&&r.independent&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.herd='applied';
+            if(hasPriorSeen('cascade')&&r.sameSourceFound&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.cascade='applied';
+            if(hasPriorSeen('source')&&verifiedRelevant&&!reliesOnWeakCrowd)profile.handbook.source='applied';
+            if(hasPriorSeen('independence')&&r.independent&&r.scenario.sameSource&&!reliesOnWeakCrowd)profile.handbook.independence='applied';
+            if(hasPriorSeen('outcome')&&(verifiedRelevant||r.sameSourceFound||r.deferQuality)&&!reliesOnWeakCrowd)profile.handbook.outcome='applied';
+            this.rumorProfile=profile;
+            this.saveRumorProfile();
+      /* 教程局补记 herd 现象（原 v2 尾） */
+      if(r.tutorial)profile.handbook.herd='seen';
+      this.rumorProfile=profile;this.saveRumorProfile();
+    };
     PixelHarborScene.prototype.rumorClueText=function(r){return r.confirmedClues?.length?r.confirmedClues.map(clue=>`<div class="rumor-message"><strong>已确认线索</strong><p>${clue}</p></div>`).join(''):'<p>还没有确认线索。调查结果会留在这里。</p>'};
     PixelHarborScene.prototype.rumorInvestigationResult=function(r,shipId,direction){
       const ship=r.ships.find(item=>item.id===shipId),gray=r.ships[1]?.id===shipId,white=r.ships[0]?.id===shipId;
@@ -783,8 +624,17 @@
       if(r.selectedAction){const msg=r.messages.find(item=>item.id===id);if(msg){r.asked.push(id);r.chips--;r.selectedAction=null;r.investigationResult=`来源结果｜${msg.role}的消息属于${msg.level}。${msg.reason||'尚未完成原始记录核验。'}`;r.sameSourceFound=r.asked.length>1&&r.messages.filter(item=>r.asked.includes(item.id)).map(item=>item.origin).some((origin,index,all)=>all.indexOf(origin)!==index);r.confirmedClues=r.confirmedClues||[];r.confirmedClues.push(r.investigationResult);r.phase=r.phase==='investigate1'?'afterInvestigate1':'afterInvestigate2';this.renderRumor();return}}
       if(r.phase==='investigate1'||r.phase==='investigate2')return;
     };
-    const previousRumorChoose=PixelHarborScene.prototype.rumorChoose;
-    PixelHarborScene.prototype.rumorChoose=function(choice){const r=this.rumor;if(!r)return;if((r.phase==='investigate1'||r.phase==='investigate2')&&choice.startsWith('investigate-')){return this.rumorTarget(choice)}if(r.phase==='decision'){r.pendingChoice=choice;r.phase='confirm';this.renderRumor();return}return previousRumorChoose.call(this,choice)};
+    PixelHarborScene.prototype.rumorChoose=function(choice){const r=this.rumor;if(!r)return;if((r.phase==='investigate1'||r.phase==='investigate2')&&choice.startsWith('investigate-')){return this.rumorTarget(choice)}if(r.phase==='decision'){r.pendingChoice=choice;r.phase='confirm';this.renderRumor();return}};
+    document.addEventListener('keydown',event=>{
+      if(!rumorPanel.classList.contains('show'))return;
+      if(event.key!=='Enter'&&event.code!=='Space')return;
+      const scene=window.pixelHarborScene;
+      const phase=scene?.rumor?.phase;
+      if(['ships','round1','afterInvestigate1','round2','afterInvestigate2','round3','judgement','voyage'].includes(phase)){
+        event.preventDefault();
+        scene.rumorAction('advance');
+      }
+    });
     /*
      * HarborLife：可迁移的生活模拟地图框架层。
      * 这里不修改今日行情/风闻局的业务状态，只给港口地图提供统一的
