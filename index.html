@@ -793,6 +793,12 @@
      */
     const HarborLife=(()=>{
       const KEY='probability-world-map-save-v3',MAX_AP=6,MINUTES_PER_DAY_START=480;
+      /* 剧情/对话进度键：这些模块把状态挂在 HarborLife.state 顶层（不在原有白名单字段内），
+       * save/load 需要显式同步到 store 的 world.storyState。
+       * STORY_TRANSIENTS 是卡牌弹窗期间的瞬态标志，绝不持久化——否则刷新后对话会被锁死。 */
+      const STORY_KEYS=['captainDialogueLinear','captainDialogueV2','captainEvent','eveLoreConversation','unpostedShipNewsV3','harborLore'];
+      const STORY_TRANSIENTS=['isDialoguePaused','isHumanCardOpen','currentHumanCardId'];
+      const storyClone=(o)=>{const c=JSON.parse(JSON.stringify(o));STORY_TRANSIENTS.forEach(k=>delete c[k]);return c};
       const schedules={
         lloyd:{morning:{mapId:'interior',x:120,y:172,facing:'down'},afternoon:{mapId:'street',x:790,y:145,facing:'left'},dusk:{mapId:'street',x:920,y:176,facing:'down'},night:{mapId:'interior',x:120,y:172,facing:'down'}},
         xiaolei:{morning:{mapId:'interior',x:190,y:135,facing:'down'},afternoon:{mapId:'street',x:678,y:160,facing:'right'},dusk:{mapId:'street',x:1000,y:182,facing:'left'},night:{mapId:'interior',x:190,y:135,facing:'down'}}
@@ -834,8 +840,8 @@
         return next;
       };
       let state=defaults(),scene=null,toastTimer=null;window.lifeSelectedInventoryId=null;
-      function load(){const gs=window.__gameStore?.getState?.();if(gs?.player){state=merge(defaults(),{player:{...state?.player,mapId:gs.player.scene||gs.world?.location||'street',position:gs.player.position||{x:630,y:169},actionPoints:gs.player.actionPoints,coins:gs.player.coins,attributes:gs.player.marketProfile?.attributes||state?.player?.attributes},time:gs.world?.time||{},inventory:gs.player.inventory||[],quickSlots:gs.player.quickSlots||[],npcStates:gs.npcs?.states||{},worldFlags:gs.world?.flags||{},collectedItems:gs.world?.collectedItems||[]})}else{try{state=merge(defaults(),JSON.parse(localStorage.getItem(KEY)||'null'))}catch(e){state=defaults()}}setPeriodFromMinutes();ensureNpcState();return state}
-      function save(){const gs=window.__gameStore;if(gs){gs.setState({player:{scene:state.player.mapId,position:{...state.player.position},coins:state.player.coins,actionPoints:state.player.actionPoints,inventory:[...(state.inventory||[])],quickSlots:[...(state.quickSlots||[])]},world:{location:state.player.mapId,time:{...state.time},flags:{...(state.worldFlags||{})},collectedItems:[...(state.collectedItems||[])]},npcs:{states:{...(state.npcStates||{})}}});gs.scheduleSave?.()}return state}
+      function load(){const gs=window.__gameStore?.getState?.();if(gs?.player){state=merge(defaults(),{player:{...state?.player,mapId:gs.player.scene||gs.world?.location||'street',position:gs.player.position||{x:630,y:169},actionPoints:gs.player.actionPoints,coins:gs.player.coins,attributes:gs.player.marketProfile?.attributes||state?.player?.attributes},time:gs.world?.time||{},inventory:gs.player.inventory||[],quickSlots:gs.player.quickSlots||[],npcStates:gs.npcs?.states||{},worldFlags:gs.world?.flags||{},collectedItems:gs.world?.collectedItems||[]})}else{try{state=merge(defaults(),JSON.parse(localStorage.getItem(KEY)||'null'))}catch(e){state=defaults()}}const storyState=gs?.world?.storyState||{};STORY_KEYS.forEach(k=>{if(storyState[k]&&typeof storyState[k]==='object')state[k]=storyClone(storyState[k])});setPeriodFromMinutes();ensureNpcState();return state}
+      function save(){const gs=window.__gameStore;if(gs){gs.setState({player:{scene:state.player.mapId,position:{...state.player.position},coins:state.player.coins,actionPoints:state.player.actionPoints,inventory:[...(state.inventory||[])],quickSlots:[...(state.quickSlots||[])]},world:{location:state.player.mapId,time:{...state.time},flags:{...(state.worldFlags||{})},collectedItems:[...(state.collectedItems||[])]},npcs:{states:{...(state.npcStates||{})}}});const story={};STORY_KEYS.forEach(k=>{if(state[k]!==undefined&&state[k]!==null)story[k]=storyClone(state[k])});gs.set('world.storyState',story);gs.scheduleSave?.()}return state}
       function toast(text){const el=document.getElementById('life-toast');if(!el)return;el.textContent=text;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2100)}
       function periodLabel(period=state.time.period){return ({morning:'上午',afternoon:'下午',dusk:'黄昏',night:'夜晚'})[period]||'上午'}
       function setPeriodFromMinutes(){const m=((state.time.elapsed%1440)+1440)%1440;state.time.period=m<720?'morning':m<1020?'afternoon':m<1200?'dusk':'night'}
