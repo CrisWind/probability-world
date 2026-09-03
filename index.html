@@ -118,7 +118,7 @@
 </head>
 <body>
   <div id="game-shell"><div id="world-area"><div id="viewport"><div id="game" aria-label="概率世界像素港口探索画布"></div><div id="ui-layer">
-    <div id="cafe-sign" class="sign">承保咖啡馆</div><div id="office-sign" class="sign">港口事务所</div><div id="archive-sign" class="sign">航运档案馆</div><div id="board-sign" class="sign">公告栏</div>
+    <div id="cafe-sign" class="sign">承保咖啡馆</div><div id="office-sign" class="sign">港口事务所</div><div id="archive-sign" class="sign">航运档案馆</div><div id="board-sign" class="sign">公告栏</div><div id="shipyard-sign" class="sign">造船厂</div>
     <div id="dialogue-ui"><span id="dialogue-name"></span><span id="dialogue-copy"></span><button id="dialogue-close" type="button">▸</button></div>
     <div id="system-hint" aria-live="polite"></div>
     <div id="object-label" aria-live="polite"></div><div id="market-guide" aria-hidden="true">⬇</div>
@@ -156,14 +156,18 @@
   <div id="captain-overlay" aria-hidden="true"><section id="captain-panel" role="dialog" aria-modal="true" aria-labelledby="captain-title"><button id="captain-close" type="button" aria-label="关闭船长事件">×</button><h2 id="captain-title">《船长的保单》</h2><div id="captain-body"></div></section></div>
   <div id="intro-overlay"><div class="intro-copy"><div class="year">1687 年 · 灰湾港</div><div class="place-name">承保咖啡馆前</div></div><button id="intro-skip-button" type="button" aria-label="跳过开场动画">跳过</button></div>
   <script src="./vendor/phaser.js"></script>
-  <script src="./game-store.js?v=1"></script>
-  <script src="./quest-definitions.js?v=1"></script><script src="./achievement-definitions.js?v=1"></script>
-  <script src="./game-event-bus.js?v=1"></script><script src="./stats-runtime.js?v=1"></script><script src="./achievement-runtime.js?v=1"></script>
-  <script src="./reward-service.js?v=1"></script>
-  <script src="./learning-adapter.js?v=1"></script>
-  <script src="./quest-runtime.js?v=1"></script>
-  <script src="./game-input-locks.js?v=1"></script>
-  <script src="./task-ui.js?v=1"></script>
+  <script src="./game-store.js?v=20260903-1"></script>
+  <script src="./quest-definitions.js?v=20260902-1"></script><script src="./achievement-definitions.js?v=20260902-1"></script>
+  <script src="./game-event-bus.js?v=20260903-1"></script><script src="./stats-runtime.js?v=20260902-1"></script><script src="./achievement-runtime.js?v=20260902-1"></script>
+  <script src="./reward-service.js?v=20260902-1"></script>
+  <script src="./learning-adapter.js?v=20260902-1"></script>
+  <script src="./quest-runtime.js?v=20260902-1"></script>
+  <script src="./game-input-locks.js?v=20260902-1"></script>
+  <script src="./task-ui.js?v=20260902-1"></script>
+  <script src="./shipyard-config.js?v=20260902-1"></script><script src="./shipyard-model.js?v=20260902-1"></script>
+  <script src="./shipyard-runtime.js?v=20260903-1"></script><script src="./shipyard-ui.js?v=20260903-1"></script>
+  <script src="./fleet-config.js?v=20260903-1"></script><script src="./fleet-model.js?v=20260903-1"></script>
+  <script src="./fleet-runtime.js?v=20260903-1"></script><script src="./fleet-ui.js?v=20260903-1"></script>
   <script src="./embedded-assets.js?v=20260828-1"></script>
   <script>
     'use strict';
@@ -194,8 +198,8 @@
     };
     const INTERACTION_ICONS={door:'↪',npc:'✦',pickup:'✚',noticeboard:'▤',building:'⌂',inspect:'◉'};
     function makeInteractive(task){
-      const type=task.type||(task.kind==='cafe-door'||task.kind==='exit-door'?'door':task.kind==='npc'?'npc':task.kind==='life-item'?'pickup':task.kind==='board'?'noticeboard':'building');
-      const label=task.label||task.name||(type==='door'?(task.kind==='exit-door'?'返回港口':'进入承保咖啡馆'):type==='pickup'?'拾取':'查看');
+      const type=task.type||(task.kind==='cafe-door'||task.kind==='exit-door'||task.kind==='shipyard-door'?'door':task.kind==='npc'?'npc':task.kind==='life-item'?'pickup':task.kind==='board'?'noticeboard':'building');
+      const label=task.label||task.name||(type==='door'?(task.kind==='exit-door'?'返回港口':task.kind==='shipyard-door'?'进入造船厂':'进入承保咖啡馆'):type==='pickup'?'拾取':'查看');
       return {...task,id:task.id||task.lifeItemId||task.key||task.kind||`${type}-${task.x}-${task.y}`,type,mapId:task.mapId||(task.kind==='exit-door'||task.kind==='npc'||task.kind==='underwriting'||task.kind==='rumor'||task.kind==='ledger'?'cafe':'harbor'),interactionRadius:task.interactionRadius||task.reach||32,label,icon:task.icon||INTERACTION_ICONS[type]||'◆',enabled:task.enabled!==false,action:task.action||{type:type==='pickup'?'pickup':type==='npc'?'talk':type==='door'?'enter':'inspect'}}
     }
     const COLORS={ink:0x14100c,navy:0x16283c,deep:0x1e3a5c,water:0x24486b,stone:0x6e6050,paper:0xe8d7b0,brass:0xc89b3c,gold:0xe8c87a,lamp:0xf0c070};
@@ -340,13 +344,21 @@
         line(404,207,442,207,0xc89b3c,.45);line(442,207,468,214,0xc89b3c,.45);line(468,214,500,214,0xc89b3c,.45);
         /* 连续水面短波纹，不使用网格。 */
         [[28,236,18],[112,248,24],[182,226,14],[278,247,22],[610,239,20],[700,250,18],[820,236,26],[1010,248,24],[1138,226,16]].forEach(([x,y,w])=>line(x,y,x+w,y,0x3e7396,.7));
-        this.streetDecor=[gull,lamp,detail];
+        this.ensureShipyardBuildingTexture();
+        const shipyardBld=this.add.image(436,140,'shipyard-building').setOrigin(.5,1).setDepth(1);
+        const syd=this.add.graphics().setDepth(3);
+        syd.fillStyle(0x3e2a1b,.22).fillEllipse(436,145,96,12);
+        /* 建筑像素细节补充：屋檐下阴影线、门口台阶 */
+        syd.lineStyle(1,0x2e2117,.5).lineBetween(396,138,476,138);
+        syd.fillStyle(0x6e6050,.6).fillRect(428,136,16,4);
+        this.streetDecor=[gull,lamp,detail,shipyardBld,syd];
         this.time.addEvent({delay:520,loop:true,callback:()=>{lamp.setFrame(lamp.frame.name==='0'?1:0);gull.setFrame(gull.frame.name==='0'?1:0)}})
       }
       setStreetScene(initial=false){
-        this.location='street';this.sceneId='street';this.panelOpen=false;underwritingPanel.classList.remove('show');this.indoorSprites.forEach(s=>s.setVisible(false));this.streetDecor.forEach(s=>s.setVisible(true));this.map.setTexture('map'+this.mapFrame).setPosition(WORLD_W/2,H/2);this.player.setPosition(initial?610:980,initial?174:174);this.player.setFrame(3);this.marker.setVisible(false);this.interactionMarker.setVisible(false);this.doorReady=null;this.obstacles=[...STREET_MAP.buildings,{x:0,y:232,w:WORLD_W,h:38},{x:0,y:84,w:66,h:80},{x:1150,y:92,w:50,h:86}];
+        this.location='street';this.sceneId='street';this.panelOpen=false;underwritingPanel.classList.remove('show');this.indoorSprites.forEach(s=>s.setVisible(false));this.streetDecor.forEach(s=>s.setVisible(true));this.map.setTexture('map'+this.mapFrame).setPosition(WORLD_W/2,H/2);this.player.setPosition(initial?610:980,initial?174:174);this.player.setFrame(3);this.marker.setVisible(false);this.interactionMarker.setVisible(false);this.doorReady=null;this.obstacles=[...STREET_MAP.buildings,{x:394,y:42,w:84,h:96},{x:0,y:232,w:WORLD_W,h:38},{x:0,y:84,w:66,h:80},{x:1150,y:92,w:50,h:86}];
         this.interactables=[
           {kind:'cafe-door',x:1000,y:136,approach:{x:1000,y:170},reach:32},
+          {kind:'shipyard-door',x:430,y:136,approach:{x:430,y:170},reach:30},
           {kind:'closed',name:'港口事务所',x:250,y:121,approach:{x:250,y:154},reach:25},
           {kind:'closed',name:'航运档案馆',x:612,y:121,approach:{x:612,y:154},reach:25},
           {kind:'board',x:1110,y:146,approach:{x:1090,y:166},reach:24},
@@ -362,7 +374,7 @@
         this.location='interior';this.sceneId='castle_cafe';window.GameEventBus?.emit({type:'scene_entered',payload:{sceneId:'castle_cafe'}});this.streetDecor.forEach(s=>s.setVisible(false));this.map.setTexture('cafe-interior').setPosition(W/2,H/2);this.player.setPosition(240,245);this.player.setFrame(7);this.marker.setVisible(false);this.interactionMarker.setVisible(false);objectLabel.classList.remove('show');this.cameras.main.stopFollow();this.cameras.main.setBounds(0,0,W,H);this.cameras.main.setScroll(0,0);this.doorReady=null;this.obstacles=[{x:0,y:0,w:W,h:66},{x:10,y:68,w:72,h:108},{x:8,y:180,w:166,h:62},{x:236,y:148,w:134,h:62},{x:360,y:74,w:104,h:52},{x:398,y:8,w:72,h:56}];this.interactables=[{id:'cafe_owner',kind:'npc',key:'lloyd',speaker:'咖啡馆老板',label:'交谈 · 咖啡馆老板',x:120,y:172,approach:{x:150,y:170},reach:36,interactionRadius:36,visible:true,interactable:true},{id:'cafe_lore_keeper',kind:'npc',key:'eve',speaker:'伊芙·船讯抄写员',label:'查看港口见闻 · 伊芙',x:275,y:105,approach:{x:275,y:130},reach:36,interactionRadius:36,visible:true,interactable:true},{kind:'npc',key:'demovre',speaker:'棣莫弗',label:'棣莫弗',x:410,y:139,approach:{x:365,y:135},reach:32},{kind:'npc',key:'shipowner',speaker:'年轻船东',label:'年轻船东',x:335,y:137,approach:{x:335,y:140},route:[{x:210,y:140},{x:335,y:140}],reach:32},{kind:'npc',key:'xiaolei',speaker:'小蕾',label:'小蕾',x:190,y:135,approach:{x:190,y:158},reach:32},{kind:'npc',key:'clerk',speaker:'账房先生',label:'账房先生',x:175,y:100,approach:{x:175,y:125},reach:32},{kind:'board',key:'board',label:'公告板',x:120,y:115,approach:{x:120,y:140},reach:32},{kind:'records',key:'records',label:'航运记录柜',x:60,y:145,approach:{x:92,y:150},reach:32},{id:'underwriting_desk',kind:'underwriting',label:'承保桌',x:300,y:205,approach:{x:300,y:220},reach:32},{kind:'rumor',label:'查看今日风闻',x:430,y:205,approach:{x:392,y:215},reach:34},{kind:'ledger',key:'ledger',label:'账本',x:285,y:205,approach:{x:285,y:220},reach:22},{kind:'corner',key:'corner',label:'棣莫弗的角桌',x:380,y:120,approach:{x:365,y:135},reach:32},{kind:'shelf',key:'shelf',label:'书架',x:410,y:60,approach:{x:380,y:72},reach:32},{kind:'counter',key:'counter',label:'柜台',x:90,y:190,approach:{x:90,y:170},reach:32},{kind:'fireplace',key:'fireplace',label:'壁炉',x:240,y:55,approach:{x:240,y:85},reach:32},{kind:'window',key:'window',label:'窗户',x:140,y:50,approach:{x:140,y:80},reach:32},{id:'cafe_exit',kind:'exit-door',label:'出口',x:240,y:246,approach:{x:240,y:220},reach:32,interactionRadius:32}];this.createIndoorSprites();this.createRumorTableSprite();this.setTopbar('承保咖啡馆 · 室内','去承保桌，开始今天的接单');if(!this.visitedFlags.marketOpened){marketGuide.style.left='300px';marketGuide.style.top='178px';marketGuide.classList.add('show')}else marketGuide.classList.remove('show');if(!this.visitedFlags.cafeWelcome){this.visitedFlags.cafeWelcome=true;this.saveFlags();this.time.delayedCall(300,()=>this.openDialogue('劳埃德',['新来的？那边那张桌子，今天有四张单要出。坐过去就知道了。']))}}
       createIndoorSprites(){this.indoorSprites.forEach(s=>s.destroy());this.indoorSprites=[];const l=this.add.sprite(120,172,'lloyd',0).setOrigin(.5,1).setDepth(7).play('lloyd-loop');const e=this.add.sprite(275,105,'demovre',0).setOrigin(.5,1).setTint(0xb4872d).setDepth(7).play('demovre-loop');const em=this.add.text(275,78,'✦ 见闻册',{font:'11px NotoPixelCN',color:'#f0cf7a',stroke:'#21160f',strokeThickness:3}).setOrigin(.5).setDepth(9);const d=this.add.sprite(410,139,'demovre',0).setOrigin(.5,1).setDepth(7).play('demovre-loop');const o=this.add.sprite(335,137,'shipowner',0).setOrigin(.5,1).setDepth(7).play('shipowner-loop');const x=this.add.sprite(190,135,'shipowner',0).setOrigin(.5,1).setTint(0x8c3a2e).setDepth(7).play('shipowner-loop');const c=this.add.sprite(175,100,'lloyd',0).setOrigin(.5,1).setTint(0x24486b).setDepth(7).play('lloyd-loop');const f=this.add.sprite(240,47,'fireplace',0).setDepth(6).play('fire-loop');const a=this.add.sprite(175,74,'indoor-lamp',0).setDepth(6).play('indoor-lamp-loop');const b=this.add.sprite(310,74,'indoor-lamp',0).setDepth(6).play('indoor-lamp-loop');this.indoorSprites=[l,e,d,o,x,c,f,a,b,em];this.npcSpriteRefs={lloyd:l,eve:e,demovre:d,shipowner:o,xiaolei:x,clerk:c}}
       setTopbar(place,goal){const task=document.getElementById('life-task-panel');if(task)task.textContent=`当前目标：${goal||'继续探索港口'}`}
-      updateWorldSigns(){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const scrollX=this.cameras?.main?.scrollX||0;const positions={cafe:[1000,78],office:[250,68],archive:[612,68],board:[1110,120]};document.querySelectorAll('#ui-layer .sign').forEach(el=>{const p=positions[el.id.replace('-sign','')];el.style.display=this.location==='street'?'block':'none';if(!p)return;el.style.left=`${(p[0]-scrollX)*zoom}px`;el.style.top=`${p[1]*zoom}px`;el.style.fontSize=`${(el.id==='cafe-sign'?10:9)*zoom}px`})}
+      updateWorldSigns(){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const scrollX=this.cameras?.main?.scrollX||0;const positions={cafe:[1000,78],office:[250,68],archive:[612,68],board:[1110,120],shipyard:[436,68]};document.querySelectorAll('#ui-layer .sign').forEach(el=>{const p=positions[el.id.replace('-sign','')];el.style.display=this.location==='street'?'block':'none';if(!p)return;el.style.left=`${(p[0]-scrollX)*zoom}px`;el.style.top=`${p[1]*zoom}px`;el.style.fontSize=`${(el.id==='cafe-sign'?10:9)*zoom}px`})}
       finishIntro(){if(!this.introActive)return;this.introActive=false;(this.introTimers||[]).forEach(t=>t?.remove?.());this.introTimers=[];introOverlay.classList.add('hidden');introSkipButton?.remove();[document.getElementById('life-task-button'),document.getElementById('life-task-panel'),document.getElementById('life-hud'),document.getElementById('life-quickbar'),document.getElementById('life-interaction'),document.getElementById('profile-hud')].forEach(el=>{if(el)el.classList.remove('intro-hidden')});window.PlayerProfile?.onIntroFinished?.();if(!this.introPromptShown){this.introPromptShown=true;showSystemHint('点击地面移动；靠近门、人物或物件后再次点击即可交互。')}}
       skipIntro(){if(!this.introActive)return;introOverlay.classList.add('fadeout');this.finishIntro()}
       clearDialogue(){if(this.dialog.timer){clearInterval(this.dialog.timer);this.dialog.timer=null}dialogueUi.querySelector('.ship-news-choices')?.remove();dialogueUi.classList.remove('show','ready','choice-mode');this.dialogVisible=false;this.dialog.typing=false}
@@ -377,7 +389,7 @@
       findInteractionAt(x,y,radius=32){let best=null,bestScore=Infinity;const priority={pickup:0,door:1,npc:2,noticeboard:3,building:4};for(const task of this.interactables){if(task.enabled===false)continue;const hitRadius=task.type==='pickup'||task.kind==='life-item'?36:radius;const distance=Phaser.Math.Distance.Between(x,y,task.x,task.y);if(distance<=hitRadius){const score=(priority[task.type]??5)*1000+distance;if(score<bestScore){best=task;bestScore=score}}}return best}
       onPointer(x,y){if(window.GameInputLocks?.isLocked?.()||this.introActive||this.transitioning||this.panelOpen)return;hideSystemHint();if(this.dialogVisible){this.advanceDialogue();if(this.dialogVisible)return}const hit=this.findInteractionAt(x,y);if(hit&&Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(hit)))<=(hit.interactionRadius||hit.reach||32)){this.interact(hit,true);return}if(hit)this.moveTo(null,hit);else this.moveTo({x,y},null)}
       isBlocked(x,y,ignoreNpcId=null){
-        if(this.location==='interior'){
+        if(this.location==='interior'||this.location==='shipyard'){
           if(x<9||x>W-9||y<68||y>260)return true
         }else{
           if(x<9||x>WORLD_W-9||y<27||y>224)return true;
@@ -399,10 +411,13 @@
       setIdleFrame(){const key=this.player.anims.currentAnim?.key||'down-walk';const row=key.startsWith('up')?1:key.startsWith('left')?2:key.startsWith('right')?3:0;this.player.setFrame(row*4+3)}
       openNoticePanel(){const overlay=document.getElementById('notice-overlay');if(!overlay)return;this.clearDialogue();this.panelOpen=true;overlay.classList.add('is-open');overlay.setAttribute('aria-hidden','false');const flags=HarborLife.state.worldFlags;if(!flags.inspectedObjects.includes('harbor-noticeboard'))flags.inspectedObjects.push('harbor-noticeboard');HarborLife.save();}
       closeNoticePanel(){const overlay=document.getElementById('notice-overlay');if(!overlay?.classList.contains('is-open'))return;overlay.classList.remove('is-open');overlay.setAttribute('aria-hidden','true');this.panelOpen=false;}
-      updateInteractionPrompt(){const door=this.interactables.find(o=>o.kind==='cafe-door');if(this.location==='street'&&this.doorReady&&door&&Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(door)))>40)this.doorReady=null;const candidates=this.interactables.filter(o=>o.enabled!==false&&o.label&&o.x>-900).map(o=>({task:o,distance:Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(o)))})).sort((a,b)=>a.distance-b.distance);const nearLabel=candidates[0]?.distance<=48?candidates[0].task:null;if(nearLabel){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const sx=this.location==='street'?(this.cameras.main.scrollX||0):0;const name=nearLabel.kind==='cafe-door'?'承保咖啡馆入口':nearLabel.kind==='exit-door'?'出口':nearLabel.kind==='life-item'?'物品':nearLabel.label;objectLabel.textContent=name;objectLabel.style.left=`${(nearLabel.x-sx)*zoom}px`;objectLabel.style.top=`${(nearLabel.y-44)*zoom}px`;objectLabel.classList.add('show')}else objectLabel.classList.remove('show');if(this.isMoving||window.GameInputLocks?.isLocked?.()||this.dialogVisible||this.panelOpen||this.introActive||this.transitioning){this.interactionMarker.setVisible(false);return}const nearIcon=candidates[0]?.distance<=40?candidates[0].task:null;if(nearIcon){this.interactionMarker.setPosition(nearIcon.x,nearIcon.y-28).setVisible(true)}else this.interactionMarker.setVisible(false)}
+      updateInteractionPrompt(){const door=this.interactables.find(o=>o.kind==='cafe-door');if(this.location==='street'&&this.doorReady&&door&&Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(door)))>40)this.doorReady=null;const candidates=this.interactables.filter(o=>o.enabled!==false&&o.label&&o.x>-900).map(o=>({task:o,distance:Phaser.Math.Distance.Between(this.player.x,this.player.y,...Object.values(this.interactionPoint(o)))})).sort((a,b)=>a.distance-b.distance);const nearLabel=candidates[0]?.distance<=48?candidates[0].task:null;if(nearLabel){const zoom=parseInt(getComputedStyle(viewport).getPropertyValue('--pixel-zoom'),10)||2;const sx=this.location==='street'?(this.cameras.main.scrollX||0):0;const name=nearLabel.kind==='cafe-door'?'承保咖啡馆入口':nearLabel.kind==='shipyard-door'?'造船厂入口':nearLabel.kind==='exit-door'?'出口':nearLabel.kind==='life-item'?'物品':nearLabel.label;objectLabel.textContent=name;objectLabel.style.left=`${(nearLabel.x-sx)*zoom}px`;objectLabel.style.top=`${(nearLabel.y-44)*zoom}px`;objectLabel.classList.add('show')}else objectLabel.classList.remove('show');if(this.isMoving||window.GameInputLocks?.isLocked?.()||this.dialogVisible||this.panelOpen||this.introActive||this.transitioning){this.interactionMarker.setVisible(false);return}const nearIcon=candidates[0]?.distance<=40?candidates[0].task:null;if(nearIcon){this.interactionMarker.setPosition(nearIcon.x,nearIcon.y-28).setVisible(true)}else this.interactionMarker.setVisible(false)}
       interact(task,fromClick=false){
         /* 船长事件见闻挂钩（原 captainEvent 包装层收敛进单点分发） */
         if(task.kind==='captain-cargo'){window.CaptainLore?.onCargo?.();return}
+        if(task.kind==='inspection-desk'){window.ShipyardUI?.open?.();return}
+        if(task.kind==='fleet-desk'){window.FleetUI?.open?.();return}
+        if(task.kind==='shipyard-hull'){this.showMessage('曙光号','橡木 1686 年冬批的船材。右舷中段昨夜刚换过旧木板，还没做水密测试。要细看，去质检台。');return}
         if(task.kind==='board')window.CaptainLore?.onBoard?.();
         if(task.kind==='records')window.CaptainLore?.onRecords?.();
         /* 生活模拟：场景拾取（原 HarborLife 包装层收敛进本体） */
@@ -419,6 +434,7 @@
         const flags=HarborLife.state.worldFlags;
         if(task.kind==='cafe-door'){if(fromClick){if(!flags.unlockedEntrances.includes('cafe'))flags.unlockedEntrances.push('cafe');HarborLife.save();this.enterCafe();return}this.doorReady='enter';showSystemHint('已到承保咖啡馆门口，点击门进入。');return}
         if(task.kind==='exit-door'){if(fromClick){if(!flags.unlockedEntrances.includes('harbor'))flags.unlockedEntrances.push('harbor');HarborLife.save();this.exitCafe();return}this.doorReady='exit';showSystemHint('已到出口门，点击门返回港口街道。');return}
+        if(task.kind==='shipyard-door'){if(fromClick){if(!flags.unlockedEntrances.includes('shipyard'))flags.unlockedEntrances.push('shipyard');HarborLife.save();this.enterShipyard();return}this.doorReady='shipyard';showSystemHint('已到造船厂门口，点击门进入。');return}
         if(task.kind==='npc'){if(task.key&&!flags.talkedTo.includes(task.key)){flags.talkedTo.push(task.key);HarborLife.save()}this.speak(task);return}
         const lines={board:['劳埃德的承保咖啡馆——凡有船要走，先来问价。','今日：晨潮号 · 灰湾—北岬 · 货值 100 潮汐币。'],records:['柜子里锁着这条航线的过去。想翻？明早开张，先付钱。'],ledger:['账本还空着。明儿起，你签的每一单都记这儿，赚的赔的都在。'],corner:['摊着一本写机会的书，页边全是批注。有一行写着：“别把运气当本事。”'],shelf:['书都蒙灰了，就最上面那本被人翻旧了。'],counter:['铜秤、咖啡壶。劳埃德正擦杯子呢。'],fireplace:['炉火旺得很。夜里这风，吹不进这扇门。'],window:['窗外是灰湾港的灯火。海面上，晨潮号还泊着。']};
         if(task.kind==='underwriting'){this.openUnderwriting();return}
@@ -444,6 +460,101 @@
     }
     /* NPC 剧情分发注册表：interact 单点查表，替代多层 prototype 包装（eve-lore/linear/unposted/captainEvent）。 */
     window.NpcFlowRegistry={handlers:{},register(key,handler){if(key&&typeof handler==='function')this.handlers[key]=handler;return this}};
+    /* ============================================================
+     * 造船厂质检房 V0.1 —— 独立场景接入（不包装 setInteriorScene）
+     * 独立 sceneId/location/出生点/底图：底图用运行时生成的占位纹理，
+     * 绝不复用 cafe-interior（isCafeInteriorScene 的底图兜底会把咖啡馆 NPC 日程带进来）。
+     * ============================================================ */
+    PixelHarborScene.prototype.ensureShipyardBuildingTexture=function(){
+      if(this.textures.exists('shipyard-building'))return;
+      const g=this.make.graphics({x:0,y:0,add:false});
+      /* ── 墙体：木质工坊基调，与事务所红砖/档案馆石墙形成材质区分 ── */
+      const wallTop=30,wallBot=98,wallH=wallBot-wallTop;
+      g.fillStyle(0x5a3b2a,1).fillRect(0,wallTop,84,wallH);
+      /* 木纹水平线（模拟横板拼接，与档案馆水平砌缝同手法） */
+      g.lineStyle(1,0x4a2e1e,.55);
+      [40,50,60,70,80,90].forEach(function(y){g.lineBetween(1,y,83,y)});
+      /* 竖向支撑柱（船坞骨架感） */
+      g.lineStyle(1,0x3e2a1b,.7);
+      [0,28,56,84].forEach(function(x){g.lineBetween(x,wallTop,x,wallBot)});
+      /* 墙体轮廓 */
+      g.lineStyle(2,0x3e2a1b,.95).strokeRect(0,wallTop,84,wallH);
+      /* ── 屋顶：双层斜面，明暗分层（参考事务所/咖啡馆屋檐线条） ── */
+      /* 深色底檐 */
+      g.fillStyle(0x3e2a1b,1).fillTriangle(-6,wallTop+2,90,wallTop+2,42,-2);
+      /* 亮色主面 */
+      g.fillStyle(0x6b4a2f,1).fillTriangle(-4,wallTop,88,wallTop,42,2);
+      /* 屋脊高光 */
+      g.lineStyle(1,0x8a6744,.7).lineBetween(42,2,42,wallTop);
+      /* 屋顶轮廓 */
+      g.lineStyle(2,0x2e2117,1).strokeTriangle(-4,wallTop,88,wallTop,42,2);
+      /* ── 窗户：两扇带窗框+十字窗棂（与咖啡馆窗框同手法） ── */
+      g.fillStyle(0x17324a,.85).fillRect(6,42,16,14);
+      g.lineStyle(1,0x3e2a1b,1).strokeRect(6,42,16,14);
+      g.lineStyle(1,0xe8c87a,.6).lineBetween(14,42,14,56).lineBetween(6,49,22,49);
+      g.fillStyle(0x17324a,.85).fillRect(62,42,16,14);
+      g.lineStyle(1,0x3e2a1b,1).strokeRect(62,42,16,14);
+      g.lineStyle(1,0xe8c87a,.6).lineBetween(70,42,70,56).lineBetween(62,49,78,49);
+      /* ── 门洞：真正的开口（与咖啡馆门洞同手法） ── */
+      g.fillStyle(0x1a120a,1).fillRect(32,66,20,32);
+      g.lineStyle(2,0x3e2a1b,1).strokeRect(32,66,20,32);
+      /* 门楣横梁 */
+      g.fillStyle(0x6b4a2f,1).fillRect(30,63,24,4);
+      g.lineStyle(1,0x3e2a1b,1).strokeRect(30,63,24,4);
+      /* 门把手 */
+      g.fillStyle(0xc89b3c,1).fillCircle(48,82,2);
+      /* ── 点题细节：右侧桅杆+旗帜（船坞标识） ── */
+      g.lineStyle(3,0x6b4a2f,1).lineBetween(74,2,74,30);
+      g.lineStyle(2,0x6b4a2f,1).lineBetween(66,8,82,8);
+      g.fillStyle(0xc89b3c,.85).fillTriangle(74,4,74,14,82,9);
+      /* ── 木牌招牌：挂在门楣上方（融入建筑，非悬浮标签） ── */
+      g.fillStyle(0x8a6744,1).fillRect(24,56,36,8);
+      g.lineStyle(1,0x3e2a1b,1).strokeRect(24,56,36,8);
+      g.lineStyle(1,0x3e2a1b,.6).lineBetween(30,56,30,53).lineBetween(54,56,54,53);
+      /* ── 左侧脚手架/木料堆（工坊氛围） ── */
+      g.fillStyle(0x6b4a2f,.8).fillRect(-4,78,6,20);
+      g.fillStyle(0x8a6744,.7).fillRect(-2,82,4,16);
+      g.lineStyle(1,0x3e2a1b,.5).lineBetween(-4,78,2,78);
+      g.generateTexture('shipyard-building',84,98);g.destroy();
+    };
+    PixelHarborScene.prototype.ensureShipyardTexture=function(){
+      if(this.textures.exists('shipyard-floor'))return;
+      const g=this.make.graphics({x:0,y:0,add:false});
+      g.fillStyle(0x4a3826,1).fillRect(0,0,W,H);
+      for(let y=66;y<H;y+=14){g.fillStyle((y/14)%2?0x54402c:0x4c3a28,1).fillRect(0,y,W,13);g.lineStyle(1,0x2e2117,.7).lineBetween(0,y,W,y)}
+      g.fillStyle(0x3a2c1e,1).fillRect(0,0,W,66);g.lineStyle(2,0x241a10,.9).lineBetween(0,66,W,66);
+      g.fillStyle(0x2e2117,1).fillRect(150,96,180,10);
+      g.fillStyle(0x6b4a2f,1).fillTriangle(170,96,310,96,288,60,192,60);
+      g.lineStyle(2,0x211b17,1).strokeTriangle(170,96,310,96,288,60,192,60);
+      g.lineStyle(3,0x211b17,1).lineBetween(240,60,240,26);g.fillStyle(0xc9b283,1).fillTriangle(240,28,266,44,240,52);
+      g.fillStyle(0x5a3b2a,1).fillRect(58,150,84,34);g.lineStyle(2,0x211b17,1).strokeRect(58,150,84,34);
+      g.fillStyle(0xe8d7b0,1).fillRect(72,142,30,10);
+      g.fillStyle(0x8b6b4a,1).fillRect(338,150,84,34);g.lineStyle(2,0x211b17,1).strokeRect(338,150,84,34);g.fillStyle(0xd4b896,1).fillRect(350,142,34,10);g.fillStyle(0x4a3520,1).fillRect(356,156,14,8);g.fillStyle(0xc89b3c,1).fillCircle(392,170,3);g.lineStyle(1,0x6b4a2f,.6).lineBetween(338,168,422,168);g.fillStyle(0xf0c070,.12).fillCircle(380,90,22);g.fillStyle(0xf0c070,.16).fillCircle(120,90,26);g.fillStyle(0xf0c070,.16).fillCircle(360,90,26);
+      g.fillStyle(0x1a120c,1).fillRect(218,244,44,26);g.fillStyle(0x3a2c1e,1).fillRect(216,240,48,6);g.lineStyle(1,0x6b4a2f,.8).lineBetween(216,240,264,240);g.fillStyle(0xc89b3c,1).fillCircle(254,258,2);
+      g.generateTexture('shipyard-floor',W,H);g.destroy();
+    };
+    PixelHarborScene.prototype.setShipyardScene=function(){
+      this.ensureShipyardTexture();
+      this.interactables=(this.interactables||[]).map(makeInteractive);
+      this.panelOpen=false;underwritingPanel.classList.remove('show');this.isMoving=false;this.target=null;this.pending=null;this.route=[];
+      this.location='shipyard';this.sceneId='shipyard';window.GameEventBus?.emit({type:'scene_entered',payload:{sceneId:'shipyard'}});
+      this.streetDecor.forEach(s=>s.setVisible(false));this.indoorSprites.forEach(s=>s.setVisible(false));
+      this.map.setTexture('shipyard-floor').setPosition(W/2,H/2);
+      this.player.setPosition(240,236);this.player.setFrame(7);
+      this.marker.setVisible(false);this.interactionMarker.setVisible(false);objectLabel.classList.remove('show');
+      this.cameras.main.stopFollow();this.cameras.main.setBounds(0,0,W,H);this.cameras.main.setScroll(0,0);
+      this.doorReady=null;
+      this.obstacles=[{x:0,y:0,w:W,h:66},{x:150,y:56,w:160,h:50},{x:52,y:138,w:96,h:50},{x:332,y:138,w:96,h:50}];
+      this.interactables=[
+        {kind:'exit-door',x:240,y:256,approach:{x:240,y:240},reach:28,label:'离开造船厂'},
+        {kind:'inspection-desk',key:'inspection-desk',label:'质检台 · 曙光号',x:100,y:158,approach:{x:100,y:190},reach:36,type:'building',action:{type:'inspect'}},
+        {kind:'shipyard-hull',key:'shipyard-hull',label:'查看曙光号船体',x:240,y:96,approach:{x:240,y:150},reach:40,type:'building',action:{type:'inspect'}},
+        {kind:'fleet-desk',key:'fleet-desk',label:'商会风险盘',x:380,y:158,approach:{x:380,y:190},reach:36,type:'building',action:{type:'fleet'}}
+      ].map(makeInteractive);
+      this.setTopbar('造船厂 · 质检房','目标：质检曙光号');
+      if(window.HarborLife){HarborLife.setScene(this);HarborLife.syncScene(this)}
+    };
+    PixelHarborScene.prototype.enterShipyard=function(){this.transitioning=true;this.isMoving=false;this.target=null;this.pending=null;this.route=[];this.doorReady=null;this.clearDialogue();this.cameras.main.fadeOut(180,0,0,0);this.time.delayedCall(200,()=>{this.setShipyardScene();this.cameras.main.fadeIn(180);this.transitioning=false})};
     /* ============================================================
      * 风闻局（收敛后单一实现）
      * 原为 v1 → 约束补丁 → v2 → v3 四代 prototype 覆盖链（部分方法被覆盖 4-5 次），
@@ -797,10 +908,10 @@
             {id:'coins',x:1010,y:177,approach:{x:1010,y:168},label:'拾取铜币袋'},
             {id:'pass',x:1140,y:154,approach:{x:1096,y:166},label:'拾取港口通行证'}
           ]
-          :[
+          :(s.location==='interior'?[
             {id:'coffee',x:125,y:220,approach:{x:125,y:210},label:'拾取咖啡'},
             {id:'letter',x:90,y:188,approach:{x:90,y:170},label:'拾取密封信件'}
-          ];
+          ]:[]);
         placements.forEach(p=>{
           if(state.collectedItems.includes(p.id)||s.interactables.some(o=>o.lifeItemId===p.id))return;
           s.interactables.push(makeInteractive({kind:'life-item',lifeItemId:p.id,x:p.x,y:p.y,approach:p.approach,reach:26,label:p.label,type:'pickup',action:{type:'pickup'}}));
@@ -822,7 +933,7 @@
        * 未来其他室内场景使用各自的 sceneId/底图/新 location，不会继承咖啡馆坐标与可见性。 */
       function isCafeInteriorScene(s){return !!(s&&s.location==='interior'&&(s.sceneId==='castle_cafe'||(s.map&&s.map.texture&&s.map.texture.key==='cafe-interior')))}
       function npcMapMatches(mapId,s){return mapId==='street'?!!(s&&s.location==='street'):mapId==='interior'?isCafeInteriorScene(s):!!(s&&mapId===s.location)}
-      function spawnPoint(mapId){return mapId==='street'?{x:756,y:166}:{x:240,y:220}}
+      function spawnPoint(mapId){return mapId==='street'?{x:756,y:166}:mapId==='shipyard'?{x:240,y:228}:{x:240,y:220}}
       function updateNpcSchedule(s,retarget=false){
         ensureNpcState();
         Object.keys(schedules).forEach(id=>{
@@ -901,11 +1012,15 @@
         const t=timeParts();
         if(period)period.textContent=`${periodLabel()} ${String(t.hour).padStart(2,'0')}:${String(t.minute).padStart(2,'0')}`;
         if(weather)weather.textContent=state.time.period==='night'?'☾':state.time.period==='dusk'?'◒':'☀';
-        if(task)task.textContent=`当前目标：${state.player.mapId==='interior'?'去承保桌，开始今天的接单':'进入承保咖啡馆'}`;
+        if(task)task.textContent=`当前目标：${state.player.mapId==='interior'?'去承保桌，开始今天的接单':state.player.mapId==='shipyard'?'质检曙光号':'进入承保咖啡馆'}`;
         renderQuickbar();
       }
       function reset(){
-        state=defaults();
+        /* 重置口径与 ↻ 按钮对齐：整份 GameStore 归零。
+         * 只换 HarborLife 的 state 会漏掉 quests/achievements，一次性的 completed 实例
+         * 会让 unlockQuest 永久 return false，任务再也不会回到任务簿。 */
+        window.__gameStore?.reset?.();
+        load();
         save();
         toast('测试存档已重置。');
         if(scene){scene.setStreetScene(true);syncScene(scene)}
@@ -913,6 +1028,19 @@
       return {items,load,save,render,renderInventory,toast,advanceTime,addItem,removeItem,useItem,pick,inventoryCount,openInventory,closeInventory,syncScene,addSceneItems,updateNpcSchedule,updateNpcs,reset,detailText,canAffordAction,spendAction,scheduleFor,periodLabel,timeParts,get state(){return state},setScene(s){scene=s}};
     })();
     HarborLife.load();
+    /* 造船厂质检房（shipyard-runtime）直接写 __gameStore.player.coins；HarborLife.state 是 load() 时的快照，不订阅的话 HUD 货币不会刷新。
+     * 单字段同步：仅 player.coins（其他字段 HarborLife 自己写，自己 save，不经 GameStore，不需要回灌）。 */
+    if(window.__gameStore?.subscribe){
+      let _lastCoins=HarborLife.state.player.coins;
+      window.__gameStore.subscribe(s=>{
+        const c=Number(s?.player?.coins);
+        if(Number.isFinite(c)&&c!==_lastCoins){
+          _lastCoins=c;
+          HarborLife.state.player.coins=c;
+          HarborLife.render();
+        }
+      });
+    }
     const baseCreateLife=PixelHarborScene.prototype.create;
     function mixColor(a,b,t){const ar=(a>>16)&255,ag=(a>>8)&255,ab=a&255,br=(b>>16)&255,bg=(b>>8)&255,bb=b&255;const rr=Math.round(ar+(br-ar)*t),rg=Math.round(ag+(bg-ag)*t),rb=Math.round(ab+(bb-ab)*t);return (rr<<16)|(rg<<8)|rb}
     const LIGHT_STATES={
@@ -943,6 +1071,7 @@
       if(!s.lifeCafeGlow)s.lifeCafeGlow=s.add.ellipse(1000,134,92,46,0xf0c070,.0).setDepth(5);
       if(!s.lifeBoardGlow)s.lifeBoardGlow=s.add.ellipse(1110,145,48,30,0xf0c070,.0).setDepth(5);
       if(!s.lifeStreetLampGlow)s.lifeStreetLampGlow=s.add.ellipse(815,145,58,34,0xf0c070,.0).setDepth(5);
+      if(!s.lifeShipyardGlow)s.lifeShipyardGlow=s.add.ellipse(436,110,52,30,0xf0c070,.0).setDepth(5);
       const glow=state.lightSources;
       const skyAlpha=activeState==='DAYLIGHT'?0:activeState==='DAWN'?.05:activeState==='DUSK'?.13:.16;
       s.lifeSkyBand.setFillStyle(state.skyPalette,skyAlpha).setVisible(s.location==='street');
@@ -955,7 +1084,8 @@
       s.lifeCafeGlow.setFillStyle(0xf0c070,state.windowLights?glow:0);
       s.lifeBoardGlow.setFillStyle(0xf0c070,state.windowLights?glow*.7:0);
       s.lifeStreetLampGlow.setFillStyle(0xf0c070,state.windowLights?glow*.85:0);
-      if(s.location!=='street'){s.lifeCafeGlow.setVisible(false);s.lifeBoardGlow.setVisible(false);s.lifeStreetLampGlow.setVisible(false)}else{s.lifeCafeGlow.setVisible(true);s.lifeBoardGlow.setVisible(true);s.lifeStreetLampGlow.setVisible(true)}
+      s.lifeShipyardGlow.setFillStyle(0xf0c070,state.windowLights?glow*.6:0);
+      if(s.location!=='street'){s.lifeCafeGlow.setVisible(false);s.lifeBoardGlow.setVisible(false);s.lifeStreetLampGlow.setVisible(false);s.lifeShipyardGlow.setVisible(false)}else{s.lifeCafeGlow.setVisible(true);s.lifeBoardGlow.setVisible(true);s.lifeStreetLampGlow.setVisible(true);s.lifeShipyardGlow.setVisible(true)}
     }
     PixelHarborScene.prototype.create=function(){
       const savedMap=HarborLife.state.player.mapId,savedPos={...HarborLife.state.player.position};
@@ -968,7 +1098,7 @@
       };
       HarborLife.setScene(this);
       updateLifeLighting(this);
-      if(savedMap==='interior')this.setInteriorScene();else if(savedMap==='street'&&savedPos){this.player.setPosition(savedPos.x,savedPos.y);HarborLife.syncScene(this)}
+      if(savedMap==='interior')this.setInteriorScene();else if(savedMap==='shipyard')this.setShipyardScene();else if(savedMap==='street'&&savedPos){this.player.setPosition(savedPos.x,savedPos.y);HarborLife.syncScene(this)}
       this.lifeKeyboard=this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT');
       HarborLife.render();
       return result
@@ -1043,7 +1173,7 @@
     document.getElementById('notice-overlay')?.addEventListener('click',e=>{if(e.target.id==='notice-overlay')window.pixelHarborScene?.closeNoticePanel()});
     inventoryOverlay?.addEventListener('click',e=>{if(e.target===inventoryOverlay)HarborLife.closeInventory()});
     document.getElementById('life-time-advance').addEventListener('click',()=>HarborLife.advanceTime(30,false));
-    document.getElementById('life-debug-collision').addEventListener('click',()=>{if(window.pixelHarborScene){window.pixelHarborScene.lifeCollisionDebug=!window.pixelHarborScene.lifeCollisionDebug;HarborLife.toast(window.pixelHarborScene.lifeCollisionDebug?'已开启碰撞显示（调试）':'已隐藏碰撞显示')}});document.getElementById('life-save-reset').addEventListener('click',HarborLife.reset);document.addEventListener('keydown',e=>{if(e.key==='F2'){e.preventDefault();if(DEBUG_MODE)document.getElementById('life-settings').classList.toggle('life-settings-open')}if(/^[1-6]$/.test(e.key)){const id=HarborLife.state.quickSlots[+e.key-1];if(id)HarborLife.useItem(id)}if(e.key==='Escape'){HarborLife.closeInventory();window.pixelHarborScene?.closeNoticePanel();document.getElementById('life-settings').classList.remove('life-settings-open')}});document.getElementById('inventory-grid')?.addEventListener('click',e=>{const b=e.target.closest('[data-life-item]');if(!b)return;window.lifeSelectedInventoryId=b.dataset.lifeItem;HarborLife.renderInventory()});document.getElementById('inventory-use')?.addEventListener('click',()=>{if(window.lifeSelectedInventoryId)HarborLife.useItem(window.lifeSelectedInventoryId);window.lifeSelectedInventoryId=null;HarborLife.renderInventory()});document.getElementById('life-quickbar').addEventListener('click',e=>{const b=e.target.closest('[data-life-slot]');if(!b)return;const id=HarborLife.state.quickSlots[+b.dataset.lifeSlot];if(id)HarborLife.useItem(id)});
+    document.getElementById('life-debug-collision').addEventListener('click',()=>{if(window.pixelHarborScene){window.pixelHarborScene.lifeCollisionDebug=!window.pixelHarborScene.lifeCollisionDebug;HarborLife.toast(window.pixelHarborScene.lifeCollisionDebug?'已开启碰撞显示（调试）':'已隐藏碰撞显示')}});document.getElementById('life-save-reset').addEventListener('click',()=>{if(!window.confirm('确定重置全部测试存档吗？任务、成就与质检报告也会一起清空。'))return;HarborLife.reset();window.location.reload()});document.addEventListener('keydown',e=>{if(e.key==='F2'){e.preventDefault();if(DEBUG_MODE)document.getElementById('life-settings').classList.toggle('life-settings-open')}if(/^[1-6]$/.test(e.key)){const id=HarborLife.state.quickSlots[+e.key-1];if(id)HarborLife.useItem(id)}if(e.key==='Escape'){HarborLife.closeInventory();window.pixelHarborScene?.closeNoticePanel();document.getElementById('life-settings').classList.remove('life-settings-open')}});document.getElementById('inventory-grid')?.addEventListener('click',e=>{const b=e.target.closest('[data-life-item]');if(!b)return;window.lifeSelectedInventoryId=b.dataset.lifeItem;HarborLife.renderInventory()});document.getElementById('inventory-use')?.addEventListener('click',()=>{if(window.lifeSelectedInventoryId)HarborLife.useItem(window.lifeSelectedInventoryId);window.lifeSelectedInventoryId=null;HarborLife.renderInventory()});document.getElementById('life-quickbar').addEventListener('click',e=>{const b=e.target.closest('[data-life-slot]');if(!b)return;const id=HarborLife.state.quickSlots[+b.dataset.lifeSlot];if(id)HarborLife.useItem(id)});
     document.querySelectorAll('[data-life-light]').forEach(btn=>btn.addEventListener('click',()=>{window.lifeLightState=btn.dataset.lifeLight;window.pixelHarborScene&&updateLifeLighting(window.pixelHarborScene)}));
     document.querySelectorAll('[data-life-dir]').forEach(btn=>{const dir=btn.dataset.lifeDir;const down=()=>{if(window.pixelHarborScene)window.pixelHarborScene.lifeKeyboard[dir==='up'?'UP':dir==='down'?'DOWN':dir==='left'?'LEFT':'RIGHT'].isDown=true};const up=()=>{if(window.pixelHarborScene)window.pixelHarborScene.lifeKeyboard[dir==='up'?'UP':dir==='down'?'DOWN':dir==='left'?'LEFT':'RIGHT'].isDown=false};btn.addEventListener('pointerdown',down);btn.addEventListener('pointerup',up);btn.addEventListener('pointercancel',up);});
     const gameConfig={type:Phaser.AUTO,parent:'game',width:W,height:H,backgroundColor:'#16283c',pixelArt:true,antialias:false,roundPixels:true,render:{antialias:false,roundPixels:true},scale:{mode:Phaser.Scale.NONE,width:W,height:H},scene:[PixelHarborScene]};
@@ -1105,6 +1235,6 @@
   </script>
 <script src="./captain-dialogue-linear.js?v=20260828-5"></script>
 <script src="./unposted-ship-news.js?v=20260828-6"></script><script src="./eve-lore.js?v=20260901-1"></script>
-<script src="./player-profile.js?v=1"></script><script src="./achievement-ui.js?v=1"></script>
+<script src="./player-profile.js?v=20260902-1"></script><script src="./achievement-ui.js?v=20260902-1"></script>
 </body>
 </html>

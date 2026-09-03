@@ -16,6 +16,23 @@
       ]),
       rewards:Object.freeze([Object.freeze({id:'coins_8',type:'coins',amount:8}),Object.freeze({id:'lore_coffeehouse',type:'lore_card',cardId:'coffeehouse_age_of_sail'})]),
       worldEffects:Object.freeze({ref:'quest_world_effects.unposted_ship_news'})
+    }),
+    'quest.cant_tear_down_all':Object.freeze({
+      id:'quest.cant_tear_down_all',
+      type:'side',
+      title:'不能全拆的船',
+      summary:'造船厂的质检房里，一批新船正等着出航。也许该看看抽样到底能发现什么。',
+      giverNpcId:null,
+      locationHint:'shipyard',
+      unlockWhen:Object.freeze({event:'scene_entered',sceneId:'shipyard'}),
+      activateWhen:Object.freeze({event:'inspection_started'}),
+      steps:Object.freeze([
+        Object.freeze({id:'inspect_a_ship',text:'在质检房完成一次船舶检验。',completeWhen:Object.freeze({event:'inspection_completed'}),outcomeId:null})
+      ]),
+      rewards:Object.freeze([
+        Object.freeze({id:'coins_15',type:'coins',amount:15})
+      ]),
+      worldEffects:null
     })
   });
   const clone=value=>JSON.parse(JSON.stringify(value));

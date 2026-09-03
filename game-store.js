@@ -18,7 +18,7 @@
   const defaults=()=>({
     version:VERSION,
     player:{scene:'street',position:{x:630,y:169},coins:120,actionPoints:6,attributes:{sight:0,calculation:0,courage:0,voice:0},inventory:[],quickSlots:[],profile:{nickname:'未命名记录员',avatarId:'avatar_default',equippedTitleId:null,createdAt:null,updatedAt:null}},
-    world:{location:'street',time:{period:'morning',elapsed:480},flags:{},collectedItems:[]},
+    world:{location:'street',time:{period:'morning',elapsed:480},flags:{},collectedItems:[],shipyard:{version:1,reports:[],activeInspection:null},fleet:{version:1,activeCampaign:null,archivedCampaigns:[]}},
     npcs:{states:{},relations:{},schedule:{}},
     dialogue:{currentNodeId:null,progress:{},seenNodes:[]},
     cards:{seen:{},library:[]},

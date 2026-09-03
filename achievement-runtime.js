@@ -16,7 +16,9 @@
     if (!expected || typeof expected !== 'object' || Array.isArray(expected)) return false;
     if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false;
     return Object.keys(expected).every(function (key) {
-      return Object.prototype.hasOwnProperty.call(actual, key) && actual[key] === expected[key];
+      if (!Object.prototype.hasOwnProperty.call(actual, key)) return false;
+      if (Array.isArray(expected[key])) return expected[key].indexOf(actual[key]) !== -1;
+      return actual[key] === expected[key];
     });
   }
 
@@ -122,7 +124,7 @@
 
   function init() {
     if (unsubscribers.length) return false;
-    unsubscribers = [bus.on('choice_made', handleEvent), bus.on('quest_completed', handleEvent)];
+    unsubscribers = [bus.on('choice_made', handleEvent), bus.on('quest_completed', handleEvent), bus.on('inspection_completed', handleEvent)];
     backfill();
     return true;
   }

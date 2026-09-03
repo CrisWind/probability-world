@@ -13,7 +13,16 @@
     'location_reached',
     'decision_submitted',
     'achievement_unlocked',
-    'quest_completed'
+    'quest_completed',
+    'inspection_started',
+    'inspection_sampled',
+    'inspection_decision_submitted',
+    'inspection_completed',
+    'fleet_plan_submitted',
+    'fleet_round_settled',
+    'fleet_storm_triggered',
+    'fleet_insolvent',
+    'fleet_campaign_completed'
   ]);
   var allowedTypes = new Set(TYPES);
   var listenersByType = new Map();

@@ -99,6 +99,19 @@
     return true;
   }
 
+  function activateByEvent(definition, event) {
+    var quests = getQuestState();
+    var instance = quests.instances[definition.id];
+    if (!instance || instance.status !== 'available') return false;
+    if (definition.type === 'main' && hasActiveMainQuest(quests.instances, definition.id)) return false;
+    instance.status = 'active';
+    instance.currentStepId = definition.steps[0] ? definition.steps[0].id : null;
+    instance.acceptedAt = event.at;
+    quests.trackedQuestId = definition.id;
+    commitQuestState(quests);
+    return true;
+  }
+
   function activateAvailableQuest(definition, event) {
     var quests = getQuestState();
     var instance = quests.instances[definition.id];
@@ -155,9 +168,15 @@
           logError('Invalid quest instance status', definition.id, instance.status);
           return;
         }
-        if (instance.status === 'available' && event.type === 'npc_talked') {
-          activateAvailableQuest(definition, event);
-          return;
+        if (instance.status === 'available') {
+          if (definition.activateWhen && matchesCondition(definition.activateWhen, event)) {
+            activateByEvent(definition, event);
+            return;
+          }
+          if (event.type === 'npc_talked') {
+            activateAvailableQuest(definition, event);
+            return;
+          }
         }
         if (instance.status === 'active') advanceActiveQuest(definition, event);
       } catch (error) {
