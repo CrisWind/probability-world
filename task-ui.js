@@ -34,9 +34,8 @@
 
   if (!global.document) return;
   var button = document.getElementById('life-task-button');
-  var oldPanel = document.getElementById('life-task-panel');
+  /* #life-task-panel 目标行由 index.html 的 refreshTaskGoal 驱动，任务簿不删除它。 */
   if (!button) return;
-  if (oldPanel) oldPanel.remove();
   button.setAttribute('aria-label', '打开任务簿'); button.title = '查看任务'; button.textContent = '✎';
   var overlay = document.createElement('div');
   overlay.id = 'quest-log-overlay'; overlay.innerHTML = '<section id="quest-log-panel" role="dialog" aria-modal="true" aria-labelledby="quest-log-title"><button id="quest-log-close" type="button" aria-label="关闭任务簿">×</button><h2 id="quest-log-title">航海任务簿</h2><div id="quest-log-tabs"><button data-tab="active" type="button">进行中</button><button data-tab="available" type="button">可接取</button><button data-tab="completed" type="button">已完成</button></div><div id="quest-log-list"></div></section>';

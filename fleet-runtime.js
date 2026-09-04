@@ -1,4 +1,4 @@
-/* 概率世界 · 商会船队风险盘 V0.1 —— 运行时（状态机 + 存档 + 事件）
+/* 概率世界 · 商会船队风险盘 V0.2 —— 运行时（状态机 + 存档 + 事件）
  * 职责边界：
  *  - 唯一的 fleet 状态持有者（读写 store.world.fleet，不新建持久化入口）；
  *  - 管理 campaign 生命周期：开始、分配、结算、归档；
@@ -11,6 +11,9 @@
   var bus = function() { return global.GameEventBus; };
   var config = function() { return global.FLEET_CONFIG; };
   var model = function() { return global.FleetModel; };
+  var adapter = function() { return global.FleetInputAdapter; };
+  var learning = function() { return global.FleetLearning; };
+  var samplingLearning = function() { return global.SamplingLearning; };
 
   var NAMESPACE_DEFAULT = function() { return { version: 1, activeCampaign: null, archivedCampaigns: [] }; };
 
@@ -44,12 +47,26 @@
     return 'fleet-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 0xffffff).toString(36);
   }
 
+  function nowISO() { return new Date().toISOString(); }
+
   /* ---- Campaign 生命周期 ---- */
 
-  function startCampaign() {
+  function startCampaign(options) {
     var ns = readNamespace();
-    if (ns.activeCampaign && ns.activeCampaign.phase !== 'completed') {
-      return { ok: false, reason: 'campaign-in-progress', campaign: ns.activeCampaign };
+    var camp = ns.activeCampaign;
+
+    /* 有 planning 状态的 activeCampaign 时恢复，不重置 */
+    if (camp && camp.phase === 'planning') {
+      return { ok: true, campaign: camp, resumed: true };
+    }
+    /* 有 completed/insolvent campaign 时先归档 */
+    if (camp && (camp.phase === 'completed' || camp.phase === 'insolvent')) {
+      archiveActiveCampaign();
+    }
+
+    /* 有非 completed/insolvent/abandoned 的 campaign 时拒绝 */
+    if (camp && camp.phase !== 'completed' && camp.phase !== 'insolvent') {
+      return { ok: false, reason: 'campaign-in-progress', campaign: camp };
     }
 
     var cfg = config();
@@ -75,19 +92,37 @@
       currentRound: 1,
       totalRounds: cfg.campaign.totalRounds,
       phase: 'planning',
-      operatingCash: cfg.capital.startingCash,
+      operatingCash: cfg.capital.startingOperatingCash,
       reserve: cfg.capital.startingReserve,
-      reinsuranceActive: false,
       assignments: assignments,
       commonRiskState: commonRiskState,
       rounds: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: nowISO(),
+      updatedAt: nowISO()
     };
+
+    /* Step 3: capture input snapshot from external systems */
+    var inputAdapter = adapter();
+    if (inputAdapter && inputAdapter.buildCampaignInputSnapshot) {
+      campaign.inputSnapshot = inputAdapter.buildCampaignInputSnapshot();
+    }
+
+    /* QA 迁移：从快照派生质检效果（只存最小事实 + 引用 reportId，不复制报告本体）；
+     * 暂停出航（hold）的船第 1 回合强制留港，下一回合起可重新安排 */
+    var qaEffects = [];
+    if (campaign.inputSnapshot && inputAdapter && inputAdapter.getShipyardEffects) {
+      qaEffects = inputAdapter.getShipyardEffects(campaign.inputSnapshot) || [];
+    }
+    if (qaEffects.length > 0) {
+      for (var qe = 0; qe < qaEffects.length; qe++) {
+        if (qaEffects[qe].holdRound1) campaign.assignments[qaEffects[qe].shipId] = null;
+      }
+      campaign.shipyardEffects = qaEffects;
+    }
 
     ns.activeCampaign = campaign;
     writeNamespace(ns);
-    return { ok: true, campaign: campaign };
+    return { ok: true, campaign: campaign, resumed: false };
   }
 
   function getCampaign() {
@@ -96,21 +131,29 @@
 
   /* ---- 回合内操作 ---- */
 
-  function setAssignment(shipId, routeId) {
+  function setAssignment(shipId, routeIdOrNull) {
     var ns = readNamespace();
     var camp = ns.activeCampaign;
     if (!camp || camp.phase !== 'planning') return { ok: false, reason: 'no-planning-phase' };
 
-    if (routeId !== null) {
-      var route = model().findRoute(routeId);
+    if (routeIdOrNull !== null) {
+      var route = model().findRoute(routeIdOrNull);
       if (!route) return { ok: false, reason: 'invalid-route' };
     }
 
     var vessel = model().findVessel(shipId);
     if (!vessel) return { ok: false, reason: 'invalid-ship' };
 
-    camp.assignments[shipId] = routeId;
-    camp.updatedAt = new Date().toISOString();
+    /* QA hold：第 1 回合该船不能出航（自动留港），第 2 回合起可重新安排 */
+    var qaHold = Array.isArray(camp.shipyardEffects) ? camp.shipyardEffects : [];
+    for (var qh = 0; qh < qaHold.length; qh++) {
+      if (qaHold[qh].shipId === shipId && qaHold[qh].holdRound1 && camp.currentRound === 1 && routeIdOrNull !== null) {
+        return { ok: false, reason: 'qa-hold-round-1' };
+      }
+    }
+
+    camp.assignments[shipId] = routeIdOrNull;
+    camp.updatedAt = nowISO();
     ns.activeCampaign = camp;
     writeNamespace(ns);
     return { ok: true, assignments: camp.assignments };
@@ -122,39 +165,58 @@
     if (!camp || camp.phase !== 'planning') return { ok: false, reason: 'no-planning-phase' };
 
     var capCfg = config().capital;
+    var step = capCfg.reserveStep;
+    var maxR = capCfg.maxReserve;
+
+    /* 必须按 step 递增 */
+    if (typeof amount !== 'number' || amount < 0 || amount > maxR) {
+      return { ok: false, reason: 'out-of-range' };
+    }
+    if (amount % step !== 0) {
+      return { ok: false, reason: 'invalid-step' };
+    }
+
     var totalFunds = camp.operatingCash + camp.reserve;
-    var newReserve = Math.max(0, Math.min(capCfg.reserveMax, Math.round(amount)));
+    var newReserve = amount;
     var newCash = totalFunds - newReserve;
 
     if (newCash < 0) {
-      newCash = 0;
-      newReserve = totalFunds;
+      return { ok: false, reason: 'exceeds-total-funds' };
     }
 
     camp.operatingCash = Math.round(newCash * 100) / 100;
     camp.reserve = Math.round(newReserve * 100) / 100;
-    camp.updatedAt = new Date().toISOString();
+    camp.updatedAt = nowISO();
     ns.activeCampaign = camp;
     writeNamespace(ns);
     return { ok: true, operatingCash: camp.operatingCash, reserve: camp.reserve };
   }
 
-  function setReinsurance(active) {
-    var ns = readNamespace();
-    var camp = ns.activeCampaign;
-    if (!camp || camp.phase !== 'planning') return { ok: false, reason: 'no-planning-phase' };
+  /* 再保险始终生效，保留接口兼容 */
+  function setReinsurance() {
+    return { ok: true, alwaysActive: true };
+  }
 
-    camp.reinsuranceActive = !!active;
-    camp.updatedAt = new Date().toISOString();
-    ns.activeCampaign = camp;
-    writeNamespace(ns);
-    return { ok: true, reinsuranceActive: camp.reinsuranceActive };
+  /* 质检效果（qaMods）：快照在 campaign 开始时固定；hold 的第 1 回合由 assignments=null 表达，不参与概率 */
+  function qaModsForRound(camp, round) {
+    var map = null;
+    var effects = camp && Array.isArray(camp.shipyardEffects) ? camp.shipyardEffects : [];
+    for (var i = 0; i < effects.length; i++) {
+      var e = effects[i];
+      var mod = null;
+      if (!(e.holdRound1 && round === 1)) mod = e.qaMod;
+      if (typeof mod === 'number' && mod !== 1) {
+        if (!map) map = {};
+        map[e.shipId] = mod;
+      }
+    }
+    return map;
   }
 
   function getExpected() {
     var camp = readNamespace().activeCampaign;
     if (!camp || camp.phase !== 'planning') return null;
-    return model().expectedRound(camp.assignments, camp.commonRiskState, camp.seed, camp.currentRound);
+    return model().expectedRound(camp.assignments, camp.commonRiskState, camp.seed, camp.currentRound, qaModsForRound(camp, camp.currentRound));
   }
 
   /* ---- 提交方案 & 结算 ---- */
@@ -163,16 +225,82 @@
     var ns = readNamespace();
     var camp = ns.activeCampaign;
     if (!camp || camp.phase !== 'planning') return { ok: false, reason: 'no-planning-phase' };
+    if (camp.phase === 'completed' || camp.phase === 'insolvent' || camp.phase === 'abandoned') {
+      return { ok: false, reason: 'campaign-ended', phase: camp.phase };
+    }
+
+    /* 校验 assignments 合法 */
+    var cfg = config();
+    var vessels = cfg.vessels;
+    for (var i = 0; i < vessels.length; i++) {
+      var v = vessels[i];
+      var routeId = camp.assignments[v.shipId];
+      if (routeId !== null && routeId !== undefined) {
+        if (!model().findRoute(routeId)) {
+          return { ok: false, reason: 'invalid-assignment', shipId: v.shipId };
+        }
+      }
+    }
+
+    /* 校验 reserve 合法 */
+    var capCfg = cfg.capital;
+    if (camp.reserve < 0 || camp.reserve > capCfg.maxReserve || camp.reserve % capCfg.reserveStep !== 0) {
+      return { ok: false, reason: 'invalid-reserve' };
+    }
+
+    /* QA hold 兜底校验：第 1 回合该船必须留港 */
+    var qaSubmit = Array.isArray(camp.shipyardEffects) ? camp.shipyardEffects : [];
+    for (var qs = 0; qs < qaSubmit.length; qs++) {
+      if (qaSubmit[qs].holdRound1 && camp.currentRound === 1) {
+        var heldRoute = camp.assignments[qaSubmit[qs].shipId];
+        if (heldRoute !== null && heldRoute !== undefined) {
+          return { ok: false, reason: 'qa-hold-round-1', shipId: qaSubmit[qs].shipId };
+        }
+      }
+    }
+
+    /* 学习证据（applied）：上一轮存在共同风险回放且本轮真实调整了方案才记录 */
+    var flLearning = learning();
+    if (flLearning && camp.rounds.length > 0) {
+      var prevRoundRes = camp.rounds[camp.rounds.length - 1];
+      if (prevRoundRes && flLearning.analyzeRound(prevRoundRes).length > 0) {
+        var strategyChanges = flLearning.planChanges(
+          prevRoundRes.assignments || {}, camp.assignments,
+          typeof prevRoundRes.reserveAfter === 'number' ? prevRoundRes.reserveAfter : camp.reserve,
+          camp.reserve
+        );
+        if (strategyChanges.length > 0) flLearning.recordApplied(camp, prevRoundRes.round, strategyChanges);
+      }
+    }
+
+    var funds = { operatingCash: camp.operatingCash, reserve: camp.reserve };
+
+    /* 学习证据（sampling_representativeness 应用/迁移）：快照带质检效果时，本轮相对上一回合的调整
+     * 涉及质检船或其同批次船/准备金才记录；不伪造无调整时的进展 */
+    var sLearn = samplingLearning();
+    if (sLearn && camp.rounds.length > 0 && Array.isArray(camp.shipyardEffects) && camp.shipyardEffects.length > 0) {
+      var qaPrevRound = camp.rounds[camp.rounds.length - 1];
+      if (qaPrevRound) {
+        var qaChanges = sLearn.fleetAdjustmentChanges(camp, qaPrevRound, camp.assignments, camp.reserve);
+        if (qaChanges.length > 0) {
+          sLearn.recordFleetApplication(camp, qaChanges, camp.shipyardEffects[0].sourceReportId);
+        }
+      }
+    }
 
     emit('fleet_plan_submitted', {
-      campaignId: camp.campaignId,
       round: camp.currentRound,
+      campaignId: camp.campaignId,
       assignments: Object.assign({}, camp.assignments),
-      reserve: camp.reserve,
-      reinsuranceActive: camp.reinsuranceActive
+      operatingCash: camp.operatingCash,
+      reserve: camp.reserve
     });
 
-    var roundResult = model().resolveRound(camp.assignments, camp.commonRiskState, camp.seed, camp.currentRound);
+    /* 调用纯模型结算 */
+    var roundResult = model().resolveRound(
+      camp.assignments, camp.commonRiskState, camp.seed, camp.currentRound, funds,
+      qaModsForRound(camp, camp.currentRound)
+    );
 
     if (roundResult.storms && roundResult.storms.length > 0) {
       emit('fleet_storm_triggered', {
@@ -182,90 +310,107 @@
       });
     }
 
-    var riCfg = config().reinsurance;
-    var actualReinsuranceCost = camp.reinsuranceActive ? roundResult.totals.reinsuranceCost : 0;
-    var actualReinsuranceRecovery = camp.reinsuranceActive ? roundResult.totals.reinsuranceRecovery : 0;
-
-    var adjustedNetProfit = roundResult.totals.voyageIncome
-      - roundResult.totals.cargoLoss
-      + actualReinsuranceRecovery
-      - actualReinsuranceCost;
-    adjustedNetProfit = Math.round(adjustedNetProfit * 100) / 100;
-
-    roundResult.totals.reinsuranceCost = actualReinsuranceCost;
-    roundResult.totals.reinsuranceRecovery = actualReinsuranceRecovery;
-    roundResult.totals.netProfit = adjustedNetProfit;
-
-    roundResult.reserve = camp.reserve;
-    roundResult.reinsuranceActive = camp.reinsuranceActive;
-
-    var operatingCashBefore = camp.operatingCash;
-    var reserveBefore = camp.reserve;
-    var totalFundsBefore = Math.round((operatingCashBefore + reserveBefore) * 100) / 100;
-
-    var reserveResult = model().applyReserve(operatingCashBefore, reserveBefore, adjustedNetProfit);
-
-    roundResult.operatingCashBefore = operatingCashBefore;
-    roundResult.operatingCashAfter = reserveResult.operatingCashAfter;
-    roundResult.reserveBefore = reserveBefore;
-    roundResult.reserveUsed = reserveResult.reserveUsed;
-    roundResult.reserveAfter = reserveResult.reserveAfter;
-    roundResult.totalFundsBefore = totalFundsBefore;
-    roundResult.totalFundsAfter = Math.round((reserveResult.operatingCashAfter + reserveResult.reserveAfter) * 100) / 100;
-    roundResult.insolvent = reserveResult.insolvent;
-
+    /* 保存回合结果 */
     camp.rounds.push(roundResult);
-    camp.operatingCash = reserveResult.operatingCashAfter;
-    camp.reserve = reserveResult.reserveAfter;
 
-    var expected = model().expectedRound(camp.assignments, camp.commonRiskState, camp.seed, camp.currentRound);
-    roundResult.totals.expectedVoyageIncome = expected.expectedVoyageIncome;
-    roundResult.totals.expectedNetProfit = expected.expectedNetProfit;
+    /* 更新资金 */
+    camp.operatingCash = roundResult.operatingCashAfter;
+    camp.reserve = roundResult.reserveAfter;
 
-    if (reserveResult.insolvent) {
+    if (roundResult.insolvent) {
       camp.phase = 'insolvent';
       emit('fleet_insolvent', {
-        campaignId: camp.campaignId,
         round: camp.currentRound,
-        operatingCashAfter: reserveResult.operatingCashAfter,
-        reserveAfter: reserveResult.reserveAfter,
-        totalFundsAfter: roundResult.totalFundsAfter
+        campaignId: camp.campaignId,
+        assignments: Object.assign({}, camp.assignments),
+        voyageIncome: roundResult.voyageIncome,
+        cargoLoss: roundResult.cargoLoss,
+        reserveUsed: roundResult.reserveUsed,
+        operatingCashAfter: roundResult.operatingCashAfter,
+        reserveAfter: roundResult.reserveAfter,
+        insolvent: true
       });
     } else if (camp.currentRound >= camp.totalRounds) {
       camp.phase = 'completed';
-      emit('fleet_campaign_completed', {
-        campaignId: camp.campaignId,
-        totalRounds: camp.totalRounds,
-        finalOperatingCash: camp.operatingCash,
-        finalReserve: camp.reserve,
-        finalTotalFunds: roundResult.totalFundsAfter
-      });
     } else {
       camp.currentRound++;
       camp.phase = 'planning';
     }
 
-    camp.updatedAt = new Date().toISOString();
+    /* Step 4: fleet_campaign_completed fires on every campaign end (normal or insolvent) */
+    if (camp.phase === 'completed' || camp.phase === 'insolvent') {
+      var cumulativeVoyageIncome = 0, cumulativeCargoLoss = 0;
+      var totalReinsuranceCost = 0, totalReinsuranceRecovery = 0;
+      for (var ri = 0; ri < camp.rounds.length; ri++) {
+        cumulativeVoyageIncome += camp.rounds[ri].voyageIncome || 0;
+        cumulativeCargoLoss += camp.rounds[ri].cargoLoss || 0;
+        totalReinsuranceCost += camp.rounds[ri].reinsuranceCost || 0;
+        totalReinsuranceRecovery += camp.rounds[ri].reinsuranceRecovery || 0;
+      }
+      emit('fleet_campaign_completed', {
+        campaignId: camp.campaignId,
+        seed: camp.seed,
+        roundsSettled: camp.rounds.length,
+        outcome: camp.phase,
+        operatingCash: camp.operatingCash,
+        reserve: camp.reserve,
+        totalFunds: Math.round((camp.operatingCash + camp.reserve) * 100) / 100,
+        cumulativeVoyageIncome: Math.round(cumulativeVoyageIncome * 100) / 100,
+        cumulativeCargoLoss: Math.round(cumulativeCargoLoss * 100) / 100,
+        totalReinsuranceCost: Math.round(totalReinsuranceCost * 100) / 100,
+        totalReinsuranceRecovery: Math.round(totalReinsuranceRecovery * 100) / 100,
+        insolvent: camp.phase === 'insolvent',
+        rounds: camp.rounds
+      });
+    }
+
+    camp.updatedAt = nowISO();
     ns.activeCampaign = camp;
     writeNamespace(ns);
 
     emit('fleet_round_settled', {
-      campaignId: camp.campaignId,
       round: roundResult.round,
-      voyageIncome: roundResult.totals.voyageIncome,
-      cargoLoss: roundResult.totals.cargoLoss,
-      reinsuranceCost: roundResult.totals.reinsuranceCost,
-      reinsuranceRecovery: roundResult.totals.reinsuranceRecovery,
-      netProfit: roundResult.totals.netProfit,
+      campaignId: camp.campaignId,
+      assignments: Object.assign({}, camp.assignments),
+      voyageIncome: roundResult.voyageIncome,
+      cargoLoss: roundResult.cargoLoss,
+      reserveUsed: roundResult.reserveUsed,
       operatingCashAfter: roundResult.operatingCashAfter,
       reserveAfter: roundResult.reserveAfter,
-      totalFundsAfter: roundResult.totalFundsAfter,
-      storms: roundResult.storms.map(function(s) { return s.routeId; }),
-      batchDefects: roundResult.batchDefects,
       insolvent: roundResult.insolvent
     });
 
-    return { ok: true, roundResult: roundResult, campaign: camp };
+    /* 学习证据（encountered）：结算事实已保存后再记录，不改任何结算 */
+    var flEn = learning();
+    if (flEn) {
+      var commonEvents = flEn.analyzeRound(roundResult);
+      if (commonEvents.length > 0) flEn.recordEncounter(camp, roundResult, commonEvents);
+    }
+
+    return {
+      ok: true,
+      isFinal: camp.phase === 'completed' || camp.phase === 'insolvent',
+      phase: camp.phase,
+      round: roundResult.round,
+      result: roundResult,
+      campaign: camp
+    };
+  }
+
+  /* ---- 学习证据：本轮风险关注（每 campaign 一次；choice 为 null 表示跳过） ---- */
+  function setLearningFocus(choice) {
+    var ns = readNamespace();
+    var camp = ns.activeCampaign;
+    if (!camp || camp.phase !== 'planning') return { ok: false, reason: 'no-planning-phase' };
+    var valid = { route: true, departure: true, batch: true, none: true };
+    if (choice !== null && !valid[choice]) return { ok: false, reason: 'invalid-focus' };
+    camp.learningFocus = { shown: true, choice: choice, round: camp.currentRound };
+    camp.updatedAt = nowISO();
+    ns.activeCampaign = camp;
+    writeNamespace(ns);
+    var fl = learning();
+    if (fl && choice !== null) fl.recordFocus(camp, choice);
+    return { ok: true, learningFocus: camp.learningFocus };
   }
 
   /* ---- 放弃 campaign（归档，不删除） ---- */
@@ -275,7 +420,6 @@
     var camp = ns.activeCampaign;
     if (!camp) return { ok: false, reason: 'no-active-campaign' };
 
-    var lastRound = camp.rounds.length > 0 ? camp.rounds[camp.rounds.length - 1] : null;
     var archived = {
       campaignId: camp.campaignId,
       seed: camp.seed,
@@ -288,9 +432,35 @@
       stormsEncountered: countStorms(camp.rounds),
       totalCargoLoss: sumCargoLoss(camp.rounds),
       abandonedAtRound: camp.currentRound,
-      completedAt: new Date().toISOString()
+      completedAt: nowISO()
     };
 
+    ns.archivedCampaigns.push(archived);
+    ns.activeCampaign = null;
+    writeNamespace(ns);
+    return { ok: true, archived: archived };
+  }
+
+  function archiveActiveCampaign() {
+    var ns = readNamespace();
+    var camp = ns.activeCampaign;
+    if (!camp) return { ok: false, reason: 'no-active-campaign' };
+    if (camp.phase !== 'completed' && camp.phase !== 'insolvent' && camp.phase !== 'abandoned') {
+      return { ok: false, reason: 'campaign-not-ended', phase: camp.phase };
+    }
+    var archived = {
+      campaignId: camp.campaignId,
+      seed: camp.seed,
+      outcome: camp.phase,
+      totalRounds: camp.totalRounds,
+      roundsSettled: camp.rounds.length,
+      finalOperatingCash: camp.operatingCash,
+      finalReserve: camp.reserve,
+      finalTotalFunds: Math.round((camp.operatingCash + camp.reserve) * 100) / 100,
+      stormsEncountered: countStorms(camp.rounds),
+      totalCargoLoss: sumCargoLoss(camp.rounds),
+      completedAt: nowISO()
+    };
     ns.archivedCampaigns.push(archived);
     ns.activeCampaign = null;
     writeNamespace(ns);
@@ -308,7 +478,7 @@
   function sumCargoLoss(rounds) {
     var total = 0;
     for (var i = 0; i < rounds.length; i++) {
-      total += (rounds[i].totals && rounds[i].totals.cargoLoss) || 0;
+      total += rounds[i].cargoLoss || 0;
     }
     return Math.round(total * 100) / 100;
   }
@@ -325,9 +495,11 @@
     setAssignment: setAssignment,
     setReserve: setReserve,
     setReinsurance: setReinsurance,
+    setLearningFocus: setLearningFocus,
     getExpected: getExpected,
     submitPlan: submitPlan,
     abandonCampaign: abandonCampaign,
+    archiveActiveCampaign: archiveActiveCampaign,
     listArchived: listArchived
   });
 })(typeof window !== 'undefined' ? window : globalThis);

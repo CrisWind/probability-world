@@ -1,5 +1,5 @@
 /* 概率世界 · 造船厂质检房 V0.2 —— 质检 UI（只渲染 + 调 ShipyardRuntime，不直接改系统状态）
- * 交互流程：船的呈现 → 公开信息 → 逐部位抽样 → 决策幕 → 航程揭晓 → 报告页
+ * 交互流程：查看船况 → 执行抽样 → 作出决定 → 查看报告（报告分页签：样本/真实情况/航程/成本）
  * 复盘只陈述事实，不出现"答对/答错/掌握度"类评价。 */
 (function attachShipyardUI(global) {
   'use strict';
@@ -17,7 +17,9 @@
   let overlay = null, body = null;
   let view = 'home';
   let currentMethod = null;
-  let voyageTimer = null;
+  let batchAidOpen = false;
+  let repTab = 'sample';    /* 报告页签（UI-only）：sample 样本 / truth 真实情况 / voyage 航程 / cost 成本 */
+  let reportCtx = null;     /* 正在查看的报告：{report, batch, fromHistory} */
 
   /* ── 样式 ── */
   function injectStyle() {
@@ -25,16 +27,16 @@
     const st = doc().createElement('style');
     st.id = 'shipyard-ui-style';
     st.textContent = `
-#shipyard-overlay{position:fixed;inset:0;z-index:99994;display:none;align-items:flex-start;justify-content:center;padding:56px 16px 16px;background:rgba(20,16,12,.48);box-sizing:border-box;overflow-y:auto}
+#shipyard-overlay{position:fixed;inset:0;z-index:99994;display:none;align-items:flex-start;justify-content:center;padding:56px 16px 16px;background:rgba(20,16,12,.55);box-sizing:border-box;overflow-y:auto}
 #shipyard-overlay.show{display:flex}
 #shipyard-panel{position:relative;width:min(760px,92vw);max-height:calc(100vh - 72px);overflow-y:auto;padding:22px 24px 24px;background:#E8D7B0;color:#211B17;border:3px solid #3E2A1B;box-shadow:4px 4px 0 #14100C,inset 0 0 0 1px #C89B3C;box-sizing:border-box;font-family:NotoPixelCN,sans-serif}
-#shipyard-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;margin-bottom:14px;border-bottom:2px solid #B18A45}
-#shipyard-title{margin:0;color:#17324A;font-size:20px;line-height:1.3}
+#shipyard-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:14px;background:#6B4A2F;border:2px solid #3E2A1B;box-shadow:2px 2px 0 #14100C}
+#shipyard-title{margin:0;color:#E8D7B0;font-size:20px;line-height:1.3;text-shadow:1px 1px 0 #211B17}
 #shipyard-close{flex:none;width:44px;height:44px;background:#8C3A2E;color:#E8D7B0;border:2px solid #3E2A1B;font:20px NotoPixelCN,sans-serif;cursor:pointer;box-shadow:2px 2px 0 #14100C;display:flex;align-items:center;justify-content:center}
 #shipyard-close:hover{background:#A64B3D;border-color:#E8C87A}
-#shipyard-coins{color:#6B4A2F;font-size:12px;margin-bottom:10px}
+#shipyard-coins{color:#E8D7B0;font-size:12px;margin-bottom:10px;padding:6px 10px;background:#3E2A1B;border:1px solid #B18A45;display:inline-block}
 .shipyard-section{margin:0 0 14px;padding:14px;background:#F2E5C8;border:2px solid #B18A45;box-shadow:2px 2px 0 rgba(33,22,15,.22)}
-.shipyard-section-title{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding-bottom:6px;color:#17324A;font-size:15px;border-bottom:1px solid #B18A45}
+.shipyard-section-title{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding-bottom:6px;color:#17324A;font-size:15px;border-bottom:2px solid #B18A45}
 .shipyard-section-title .count{color:#8D6B32;font-size:11px;margin-left:auto}
 .shipyard-card{margin:10px 0;padding:12px;background:#C9B283;border:1px solid #B18A45;box-shadow:2px 2px 0 #211B17;line-height:1.6;font-size:13px}
 .shipyard-card b{color:#3E2A1B}
@@ -42,18 +44,21 @@
 .shipyard-ledger{margin:8px 0;padding:10px 12px;background:#F2E5C8;border:1px solid #B18A45;font-size:13px;line-height:1.7;color:#211B17}
 .shipyard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}
 .shipyard-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-.shipyard-action{min-height:44px;padding:8px 10px;background:#6B4A2F;color:#E8D7B0;border:2px solid #3E2A1B;box-shadow:2px 2px 0 #14100C;font:13px NotoPixelCN,sans-serif;cursor:pointer;text-align:left;white-space:normal;line-height:1.4}
+.shipyard-action{position:relative;min-height:44px;padding:8px 10px;background:linear-gradient(180deg,#6B4A2F 0%,#5A3F2A 100%);color:#E8D7B0;border:2px solid #3E2A1B;box-shadow:2px 2px 0 #14100C;font:13px NotoPixelCN,sans-serif;cursor:pointer;text-align:left;white-space:normal;line-height:1.4}
 .shipyard-action small{display:block;margin-top:2px;color:#E8C87A;font-size:11px}
-.shipyard-action:hover:not(:disabled){background:#7D5A3A;border-color:#E8C87A}
-.shipyard-action:active:not(:disabled){transform:translate(2px,2px)}
+.shipyard-action:hover:not(:disabled){background:linear-gradient(180deg,#7D5A3A 0%,#6B4A2F 100%);border-color:#E8C87A}
+.shipyard-action:active:not(:disabled){transform:translate(2px,2px);box-shadow:none}
 .shipyard-action:disabled{opacity:.45;cursor:not-allowed}
-.shipyard-action.selected{background:#8C3A2E;border-color:#E8C87A}
-.shipyard-action.secondary{background:#C9B283;color:#3E2A1B}
+.shipyard-action.selected{background:linear-gradient(180deg,#8C3A2E 0%,#6F2F23 100%);border-color:#E8C87A}
+.shipyard-action.secondary{background:linear-gradient(180deg,#C9B283 0%,#B89E72 100%);color:#3E2A1B}
 .shipyard-action.secondary small{color:#6B4A2F}
+.shipyard-action::before{content:'▸';display:inline-block;margin-right:6px;color:#E8C87A}
+.shipyard-action.secondary::before{color:#3E2A1B}
 .shipyard-muted{color:#6B4A2F;font-size:12px}
 .shipyard-stats{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0;padding:8px 10px;background:#E8D7B0;border:1px solid #B18A45;font-size:12px;color:#3E2A1B}
 .shipyard-stats b{color:#8C3A2E}
-.sy-ship{position:relative;width:100%;height:170px;margin:10px 0;background:#D4C4A0;border:2px solid #6B4A2F;overflow:hidden}
+.sy-ship{position:relative;width:100%;height:170px;margin:10px 0;background:linear-gradient(180deg,#D4C4A0 0%,#C9B283 60%,#8B9E8B 60%,#6B8A6B 100%);border:2px solid #6B4A2F;overflow:hidden;box-shadow:inset 0 0 12px rgba(33,22,15,.25)}
+.sy-ship::after{content:'⚓ 曙光号';position:absolute;left:0;right:0;bottom:6px;text-align:center;font:12px NotoPixelCN,sans-serif;color:#3E2A1B;opacity:.7}
 .sy-zone{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#C9B283;border:2px solid #6B4A2F;cursor:pointer;transition:background .12s,border-color .12s;box-sizing:border-box;text-align:center;padding:2px}
 .sy-zone:hover:not(.disabled){background:#E8D7B0;border-color:#C89B3C}
 .sy-zone.disabled{opacity:.35;cursor:not-allowed}
@@ -83,6 +88,11 @@
 .shipyard-history-item{display:block;width:100%;margin:6px 0;padding:10px;background:#F2E5C8;border:1px solid #B18A45;color:#211B17;font:12px NotoPixelCN,sans-serif;cursor:pointer;text-align:left;box-shadow:2px 2px 0 #211B17}
 .shipyard-history-item:hover{border-color:#C89B3C}
 .shipyard-fact{margin:4px 0;padding-left:12px;border-left:2px solid #B18A45;font-size:13px;line-height:1.6;color:#3E2A1B}
+.sy-tabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.sy-tab{padding:6px 14px;background:#C9B283;border:2px solid #6B4A2F;color:#3E2A1B;font:12px NotoPixelCN,sans-serif;cursor:pointer;box-shadow:2px 2px 0 rgba(33,22,15,.25)}
+.sy-tab.active{background:#6B4A2F;color:#E8D7B0;border-color:#3E2A1B}
+.sy-tab:hover:not(.active){border-color:#C89B3C}
+
 @media(max-width:560px){#shipyard-overlay{padding:48px 8px 8px}#shipyard-panel{padding:16px}.shipyard-grid,.shipyard-grid.three{grid-template-columns:1fr}#shipyard-title{font-size:17px}.sy-ship{height:140px}}`;
     doc().head.appendChild(st);
   }
@@ -194,7 +204,10 @@
       + '<span>已发现缺陷 <b>' + insp.defectsFound.length + '</b></span>'
       + '<span>已花 <b>' + insp.inspectionCost + '</b> 潮汐币</span>'
       + (insp.samplingDelay ? '<span>耽误 <b>' + insp.samplingDelay + '</b> 分钟</span>' : '')
-      + '</div></div>'
+      + '</div>'
+      + samplingCoverageHtml(insp)
+      + batchAidHtml(insp)
+      + '</div>'
 
       + '<div class="shipyard-section"><div class="shipyard-section-title">检查方式</div>'
       + '<div class="shipyard-grid three">'
@@ -237,6 +250,7 @@
     body.innerHTML =
       '<div class="shipyard-section"><div class="shipyard-section-title">你查到了什么</div>'
       + sampledHtml
+      + zoneCoverageSummaryHtml(insp)
       + '<div class="shipyard-muted">还有 ' + unsampledCount + ' 个部位未检查，状态未知。</div></div>'
 
       + '<div class="shipyard-section"><div class="shipyard-section-title">处置决定</div>'
@@ -253,91 +267,172 @@
       + '</div>';
   }
 
-  function renderVoyage(report, batch) {
-    view = 'voyage';
-    const outcome = report.actualOutcome;
-    let resultText, detailText;
-    if (!outcome.sailed) {
-      resultText = '曙光号没有出航';
-      detailText = '船留在船台，错过这一潮。';
-    } else if (outcome.accident) {
-      resultText = '曙光号出航后发生事故';
-      detailText = '起因部位：' + partLabel(outcome.accidentCause);
-    } else {
-      resultText = '曙光号平安抵达北岬';
-      detailText = '航程顺利，没有发生事故。';
-    }
-    body.innerHTML =
-      '<div class="shipyard-section"><div class="shipyard-section-title">航程揭晓</div>'
-      + '<div class="shipyard-voyage">'
-      + '<div class="shipyard-voyage-result">' + resultText + '</div>'
-      + '<div class="shipyard-voyage-detail">' + detailText + '</div>'
-      + '</div>'
-      + '<div class="shipyard-grid">' + btn('to-report', '查看完整报告', {}) + '</div>'
-      + '</div>';
+  /* 抽样覆盖事实：只依据报告里的样本与真实缺陷，不评判抽样好坏 */
+  function zoneParts(insp) {
+    const zones = config().batch.zones;
+    const per = config().batch.partsPerZone;
+    const sampled = insp.sampledParts || [];
+    const result = [];
+    zones.forEach(function(z) {
+      let count = 0;
+      sampled.forEach(function(id) { if (id.split('-')[0] === z) count++; });
+      result.push({ zone: z, sampled: count, total: per });
+    });
+    return result;
   }
 
-  function reportSections(report, batch) {
+  /* 批次观察辅助：correlated_risk 已亲历后显示；只读船队登记的同批船，不泄露缺陷、不改抽样 */
+  function correlatedStage() {
+    const fl = global.FleetLearning;
+    return (fl && fl.evidenceStage) ? fl.evidenceStage() : 'unseen';
+  }
+  function batchAidData() {
+    const ship = config().testShip;
+    const stage = correlatedStage();
+    if (!stage || stage === 'unseen') return null;
+    const vessels = (global.FLEET_CONFIG && Array.isArray(global.FLEET_CONFIG.vessels)) ? global.FLEET_CONFIG.vessels : [];
+    const own = vessels.find(function(v) { return v.name === ship.shipName; });
+    if (!own) return null;
+    const peers = vessels.filter(function(v) { return v.shipId !== own.shipId && v.batchId === own.batchId; });
+    if (!peers.length) return null;
+    const batchRecs = (global.FLEET_CONFIG && Array.isArray(global.FLEET_CONFIG.batches)) ? global.FLEET_CONFIG.batches : [];
+    const batchRec = batchRecs.find(function(b) { return b.batchId === own.batchId; });
+    return { batchId: own.batchId, batchLabel: batchRec ? batchRec.name : '未知船材批次', peers: peers.map(function(v) { return v.name; }) };
+  }
+  function batchAidHtml(insp) {
+    const data = batchAidData();
+    if (!data) return '';
+    const line = config().testShip.shipName + ' 在商会船队中登记船材批次 ' + data.batchLabel + '；同批船队成员还有 ' + data.peers.join('、') + '。';
+    let html = '<div class="shipyard-ledger" style="margin-top:2px">';
+    if (batchAidOpen) {
+      html += '<b>船队同批次观察</b><br>' + line
+        + '<br>同一批次的风险来源在船队中共享；是否因此追加抽样、返修或暂停放行，由你决定——这里不暗示本批一定有缺陷，也不替你选部位。';
+    }
+    html += '<button class="shipyard-action secondary" data-sy="aid-batch" style="margin-top:6px">'
+      + (batchAidOpen ? '收起批次观察' : '查看船队同批次关联') + '</button></div>';
+    return html;
+  }
+
+  function samplingCoverageHtml(insp) {
+    const chips = zoneParts(insp).map(function(z) {
+      const remain = z.total - z.sampled;
+      return remain > 0
+        ? '<span class="shipyard-part unknown">' + ZONE_LABEL(z.zone) + ' · 未查 ' + remain + '</span>'
+        : '<span class="shipyard-part">' + ZONE_LABEL(z.zone) + ' · 查完</span>';
+    });
+    return '<div class="shipyard-ledger" style="margin-top:2px">检查范围（已检查区域在船图上标暗）：' + chips.join('') + '</div>';
+  }
+
+  function zoneCoverageSummaryHtml(insp) {
+    const zones = zoneParts(insp);
+    const checked = zones.filter(function(z) { return z.sampled > 0; }).map(function(z) { return ZONE_LABEL(z.zone); });
+    const unchecked = zones.filter(function(z) { return z.sampled === 0; }).map(function(z) { return ZONE_LABEL(z.zone); });
+    let text = '检查范围摘要：已检查：' + (checked.length ? checked.join('、') : '无') + '；未检查：' + (unchecked.length ? unchecked.join('、') : '无') + '。';
+    return '<div class="shipyard-ledger">' + text + '</div>';
+  }
+
+  function voyageCoverageFacts(report) {
+    const outcome = report.actualOutcome || {};
+    const missed = Array.isArray(outcome.missedDefects) ? outcome.missedDefects : [];
+    const found = Array.isArray(report.defectsFound) ? report.defectsFound : [];
+    const facts = [];
+    if (missed.length > 0) {
+      facts.push('有 ' + missed.length + ' 处真实缺陷位于未检查部位——它们未被本次样本覆盖，问题在出航后才暴露。');
+      if (found.length === 0) facts.push('本次抽到的部位没有发现问题，但未检查区域存在缺陷。');
+    } else {
+      facts.push('本次样本结果与其他部位大致一致。');
+    }
+    return facts;
+  }
+
+  /* MARK-REPORT-TABS-20260904 —— 报告 4 页签：样本 / 真实情况 / 航程 / 成本（纯 UI 分页，不改任何结算/费用） */
+  const REP_TAB_LABELS = { sample: '样本', truth: '真实情况', voyage: '航程', cost: '成本' };
+  const REP_TAB_ORDER = ['sample', 'truth', 'voyage', 'cost'];
+
+  function repTabBar() {
+    let h = '<div class="sy-tabs">';
+    REP_TAB_ORDER.forEach(function(k) {
+      h += '<button class="sy-tab' + (repTab === k ? ' active' : '') + '" data-sy="rep-tab-' + k + '">' + REP_TAB_LABELS[k] + '</button>';
+    });
+    return h + '</div>';
+  }
+
+  /* 一页签一屏；事实记录按主题就近放置，不新增知识点 */
+  function reportTabSection(report, batch) {
     const outcome = report.actualOutcome;
     const foundSet = new Set(report.defectsFound);
     const missedSet = new Set(outcome.missedDefects);
     const defectOf = function(id) { const p = (batch || []).find(function(x) { return x.id === id; }); return p ? p.defect : null; };
     const sevTag = function(id) { const d = defectOf(id); return d ? '（' + SEVERITY_LABEL[d] + '）' : ''; };
+    const parts = report.sampledParts || [];
+    const total = config().batch.totalParts;
 
-    const sampledHtml = report.sampledParts.length
-      ? '<div class="shipyard-parts">' + report.sampledParts.map(function(id) {
-        return '<span class="shipyard-part' + (foundSet.has(id) ? ' defect' : '') + '">' + partLabel(id) + (foundSet.has(id) ? ' ✕' : ' ✓') + '</span>';
+    const sampledHtml = parts.length
+      ? '<div class="shipyard-parts">' + parts.map(function(id) {
+        const isDefect = foundSet.has(id);
+        return '<span class="shipyard-part' + (isDefect ? ' defect' : '') + '">' + partLabel(id) + (isDefect ? ' ✕' : ' ✓') + '</span>';
       }).join('') + '</div>'
       : '<p class="shipyard-muted">没有抽过样。</p>';
 
     const actualHtml = '<div class="shipyard-parts">' + outcome.allDefectIds.map(function(id) {
-      return '<span class="shipyard-part' + (missedSet.has(id) ? ' missed' : ' defect') + '">' + partLabel(id) + sevTag(id) + (missedSet.has(id) ? ' · 未发现' : '') + '</span>';
+      const isMissed = missedSet.has(id);
+      return '<span class="shipyard-part' + (isMissed ? ' missed' : ' defect') + '">' + partLabel(id) + sevTag(id) + (isMissed ? ' · 未发现' : '') + '</span>';
     }).join('') + '</div>';
 
-    const facts = [];
-    if (outcome.wrongRelease) facts.push('有 ' + outcome.missedDefects.length + ' 处缺陷没被样本发现，随船出航。');
-    if (outcome.overReject) facts.push('样本其实已经发现了全部缺陷，这次的' + (report.repairLevel === 'hold' ? '暂停出航' : '全面返修') + '多花了' + (report.repairLevel === 'hold' ? '船期' : '费用与船期') + '。');
-    if (!outcome.wrongRelease && !outcome.overReject && report.decision !== 'hold') facts.push('样本结论与实际质量基本一致。');
-    if (report.decision === 'hold' && !outcome.overReject) facts.push('船没有出航，缺陷留在船台等下一潮。');
-
-    const totalCost = report.inspectionCost + report.repairCost;
-
-    return '<div class="shipyard-section"><div class="shipyard-section-title">你抽到了什么<span class="count">覆盖 ' + Math.round(report.estimatedReliability.coverage * 100) + '%</span></div>'
-      + sampledHtml + '</div>'
-
-      + '<div class="shipyard-section"><div class="shipyard-section-title">实际存在什么<span class="count">共 ' + outcome.allDefectIds.length + ' 处</span></div>'
-      + actualHtml + '</div>'
-
-      + '<div class="shipyard-section"><div class="shipyard-section-title">这次航程</div>'
-      + '<div class="shipyard-card">'
-      + (outcome.sailed
-        ? (outcome.accident ? '曙光号出航后发生事故，起因部位：' + partLabel(outcome.accidentCause) + '。' : '曙光号平安抵达北岬。')
-        : '曙光号没有出航。')
-      + '</div></div>'
-
-      + '<div class="shipyard-section"><div class="shipyard-section-title">成本账</div>'
-      + '<table class="shipyard-cost-table">'
-      + '<tr><th>项目</th><th>数额</th></tr>'
-      + '<tr><td>检查费用</td><td>' + report.inspectionCost + ' 潮汐币</td></tr>'
-      + '<tr><td>返修 / 处置</td><td>' + report.repairCost + ' 潮汐币</td></tr>'
-      + '<tr><td>船期延误</td><td>' + report.departureDelay + ' 分钟</td></tr>'
-      + '<tr class="total"><td>总计</td><td>' + totalCost + ' 潮汐币</td></tr>'
-      + '</table></div>'
-
-      + '<div class="shipyard-section"><div class="shipyard-section-title">事实记录</div>'
-      + (facts.length ? facts.map(function(f) { return '<div class="shipyard-fact">' + f + '</div>'; }).join('') : '<div class="shipyard-fact">没有需要特别记录的事实。</div>')
-      + '</div>';
+    let html = '';
+    if (repTab === 'sample') {
+      html += '<div class="shipyard-section"><div class="shipyard-section-title">你抽到了什么<span class="count">覆盖 ' + Math.round(report.estimatedReliability.coverage * 100) + '%</span></div>'
+        + sampledHtml
+        + '<p class="shipyard-muted">其余 ' + (total - parts.length) + ' 个部位未检查，状态未知。</p></div>';
+    } else if (repTab === 'truth') {
+      html += '<div class="shipyard-section"><div class="shipyard-section-title">实际存在什么<span class="count">共 ' + outcome.allDefectIds.length + ' 处</span></div>'
+        + actualHtml + '</div>';
+      const facts = [];
+      if (outcome.wrongRelease) facts.push('有 ' + outcome.missedDefects.length + ' 处缺陷没被样本发现，随船出航。');
+      if (!outcome.wrongRelease && !outcome.overReject && report.decision !== 'hold') facts.push('样本结论与实际质量基本一致。');
+      html += '<div class="shipyard-section"><div class="shipyard-section-title">对照样本</div>'
+        + (facts.length ? facts.map(function(f) { return '<div class="shipyard-fact">' + f + '</div>'; }).join('') : '<div class="shipyard-fact">没有需要特别记录的事实。</div>')
+        + '</div>';
+    } else if (repTab === 'voyage') {
+      const vText = !outcome.sailed
+        ? ['曙光号没有出航', '船留在船台，错过这一潮。']
+        : (outcome.accident ? ['曙光号出航后发生事故', '起因部位：' + partLabel(outcome.accidentCause)] : ['曙光号平安抵达北岬', '航程顺利，没有发生事故。']);
+      html += '<div class="shipyard-section"><div class="shipyard-section-title">这次航程</div>'
+        + '<div class="shipyard-voyage">'
+        + '<div class="shipyard-voyage-result">' + vText[0] + '</div>'
+        + '<div class="shipyard-voyage-detail">' + vText[1] + '</div>'
+        + '</div>'
+        + (outcome.sailed ? voyageCoverageFacts(report).map(function(f) { return '<div class="shipyard-fact">' + f + '</div>'; }).join('') : '')
+        + (report.decision === 'hold' && !outcome.overReject ? '<div class="shipyard-fact">船没有出航，缺陷留在船台等下一潮。</div>' : '')
+        + '</div>';
+    } else {
+      const totalCost = report.inspectionCost + report.repairCost;
+      html += '<div class="shipyard-section"><div class="shipyard-section-title">成本账</div>'
+        + '<table class="shipyard-cost-table">'
+        + '<tr><th>项目</th><th>数额</th></tr>'
+        + '<tr><td>检查费用</td><td>' + report.inspectionCost + ' 潮汐币</td></tr>'
+        + '<tr><td>返修 / 处置</td><td>' + report.repairCost + ' 潮汐币</td></tr>'
+        + '<tr><td>船期延误</td><td>' + report.departureDelay + ' 分钟</td></tr>'
+        + '<tr class="total"><td>总计</td><td>' + totalCost + ' 潮汐币</td></tr>'
+        + '</table></div>'
+        + (outcome.overReject ? '<div class="shipyard-fact">样本其实已经发现了全部缺陷，这次的' + (report.repairLevel === 'hold' ? '暂停出航' : '全面返修') + '多花了' + (report.repairLevel === 'hold' ? '船期' : '费用与船期') + '。</div>' : '');
+    }
+    return html;
   }
 
-  function renderReport(report, batch, fromHistory) {
+  function renderReport() {
+    const ctx = reportCtx;
+    if (!ctx) { renderHome(); return; }
     view = 'report';
+    const report = ctx.report;
     body.innerHTML =
       '<div class="shipyard-section"><div class="shipyard-section-title">质检报告 ' + report.reportId.slice(-6) + '<span class="count">' + report.shipName + '</span></div>'
       + '<div class="shipyard-muted">' + (report.completedAt || report.createdAt || '').slice(0, 16).replace('T', ' ') + '</div></div>'
-      + reportSections(report, batch)
+      + repTabBar()
+      + reportTabSection(report, ctx.batch)
       + '<div class="shipyard-grid">'
-      + (fromHistory ? btn('history', '返回报告列表', { secondary: true }) : btn('home', '收下这份报告', {}))
-      + btn('close', '返回街道', { secondary: true })
+      + (ctx.fromHistory ? btn('history', '返回报告列表', { secondary: true }) : btn('home', '收下这份报告', {}))
+      + btn('close', '关闭面板', { secondary: true })
       + '</div>';
   }
 
@@ -377,31 +472,39 @@
     }
     if (action === 'abandon') { R.abandon(); currentMethod = null; renderHome(); coinsLine(); return; }
     if (action === 'home') { renderHome(); coinsLine(); return; }
+    if (action === 'aid-batch') {
+      batchAidOpen = !batchAidOpen;
+      if (batchAidOpen) {
+        const aidRes = runtime().markBatchAidViewed();
+        if (!aidRes || !aidRes.ok) batchAidOpen = false;
+      }
+      renderSampling(); coinsLine(); return;
+    }
     if (action === 'history') { renderHistory(); coinsLine(); return; }
     if (action === 'close') { close(); return; }
     if (action === 'to-sampling') { renderSampling(); coinsLine(); return; }
     if (action === 'to-decide') { renderDecide(); coinsLine(); return; }
-    if (action === 'to-report') {
-      const insp = lastReport;
-      if (insp) renderReport(insp.report, insp.batch, false);
-      coinsLine(); return;
-    }
-    if (action.indexOf('method-') === 0) { currentMethod = action.slice(7); renderSampling(); coinsLine(); return; }
     if (action.indexOf('decide-') === 0) {
       const res = R.submitDecision(action.slice(7));
       if (!res.ok) { renderDecide(); coinsLine(); return; }
-      lastReport = res;
-      renderVoyage(res.report, res.batch); coinsLine(); return;
+      reportCtx = { report: res.report, batch: res.batch, fromHistory: false };
+      repTab = 'voyage';   /* 提交决定后先揭晓航程，再翻看其它页签 */
+      renderReport(); coinsLine(); return;
+    }
+    if (action.indexOf('rep-tab-') === 0) {
+      if (!reportCtx) { renderHome(); coinsLine(); return; }
+      repTab = action.slice(8);
+      renderReport(); coinsLine(); return;
     }
     if (action.indexOf('detail-') === 0) {
       const report = R.getReport(action.slice(7));
       if (!report) { renderHistory(); coinsLine(); return; }
       const batch = report.seed ? model().createBatch(report.seed) : null;
-      renderReport(report, batch, true); coinsLine(); return;
+      reportCtx = { report: report, batch: batch, fromHistory: true };
+      repTab = 'sample';
+      renderReport(); coinsLine(); return;
     }
   }
-
-  let lastReport = null;
 
   function onZoneClick(zone) {
     if (!currentMethod) return;
@@ -422,6 +525,8 @@
   /* ── 开关 ── */
   function open() {
     ensureDom();
+    reportCtx = null;   /* 重新打开质检房时不沿用上次的报告上下文 */
+    repTab = 'sample';
     const s = scene();
     if (s) { s.clearDialogue && s.clearDialogue(); s.panelOpen = true; }
     overlay.classList.add('show');
@@ -437,7 +542,6 @@
     overlay.setAttribute('aria-hidden', 'true');
     const s = scene();
     if (s) s.panelOpen = false;
-    if (voyageTimer) { clearTimeout(voyageTimer); voyageTimer = null; }
   }
 
   function isOpen() { return !!(overlay && overlay.classList.contains('show')); }

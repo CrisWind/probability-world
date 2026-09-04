@@ -27,9 +27,16 @@
 
     /* ---- 航线 ---- */
     routes: [
-      { routeId: 'route.north',   name: '北方航线', baseRisk: 0.08, yieldRate: 0.12, volatility: 1.4, stormExposure: 0.8 },
-      { routeId: 'route.coastal', name: '近海航线', baseRisk: 0.05, yieldRate: 0.08, volatility: 1.0, stormExposure: 0.4 },
-      { routeId: 'route.south',   name: '南方航线', baseRisk: 0.10, yieldRate: 0.15, volatility: 1.8, stormExposure: 0.6 }
+      { routeId: 'route.north',   name: '北岬航线', baseRisk: 0.08, yieldRate: 0.12, volatility: 1.4, stormExposure: 0.8 },
+      { routeId: 'route.coastal', name: '沿岸航线', baseRisk: 0.05, yieldRate: 0.08, volatility: 1.0, stormExposure: 0.4 },
+      { routeId: 'route.south',   name: '南洋航线', baseRisk: 0.10, yieldRate: 0.15, volatility: 1.8, stormExposure: 0.6 }
+    ],
+
+    /* ---- 船材批次显示名（纯文案映射；内部 batchId 不变） ---- */
+    batches: [
+      { batchId: 'batch.rope_a', name: '第一批船材' },
+      { batchId: 'batch.rope_b', name: '第二批船材' },
+      { batchId: 'batch.rope_c', name: '第三批船材' }
     ],
 
     /* ---- 共同风险参数 ---- */
@@ -46,15 +53,15 @@
     /* ---- 再保险 ---- */
     reinsurance: {
       premiumRate: 0.03,
-      threshold: 40,
+      perClaimThreshold: 40,
       coverRate: 0.5
     },
 
     /* ---- 资金与准备金 ---- */
     capital: {
-      startingCash: 80,
+      startingOperatingCash: 80,
       startingReserve: 20,
-      reserveMax: 60,
+      maxReserve: 60,
       reserveStep: 10
     },
 

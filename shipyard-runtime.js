@@ -232,6 +232,24 @@
     ns.activeInspection = null;
     writeNamespace(ns);
     store()?.save?.(); // 报告是硬事实：立即落盘，不等 scheduleSave
+    /* 学习证据（sampling_representativeness 亲历）：报告已写入 GameStore 后再记；失败不影响质检 */
+    var sLearn = global.SamplingLearning;
+    if (sLearn && sLearn.recordInspectionEncounter) {
+      try { sLearn.recordInspectionEncounter(report); }
+      catch (err) { console.error('[ShipyardRuntime] sampling learning record failed', err); }
+    }
+    /* 学习证据（correlated_risk 迁移）：玩家展开过批次观察并在其后追加抽样/选择返修或停港，
+     * 报告落盘后才记录（reportId 去重；达成一次后由模块侧不再追加） */
+    var flLearn = global.FleetLearning;
+    if (flLearn && flLearn.recordInspectionMigration && insp && insp.batchAidViewedAt) {
+      try {
+        var aidExtended = insp.rounds.length > (Number(insp.batchAidViewedRound) || 0);
+        var aidManaged = decision === 'repair_partial' || decision === 'repair_full' || decision === 'hold';
+        if (aidExtended || aidManaged) {
+          flLearn.recordInspectionMigration({ reportId: report.reportId, decision: decision, extendedSamples: aidExtended, managed: aidManaged });
+        }
+      } catch (err) { console.error('[ShipyardRuntime] correlated learning record failed', err); }
+    }
     emit('inspection_completed', {
       reportId: report.reportId,
       shipId: report.shipId,
@@ -247,12 +265,26 @@
     return { ok: true, report, batch };
   }
 
+  /* 批次观察辅助被玩家展开时调用：在 activeInspection 上记下事实（持久、可恢复），
+   * 供 submitDecision 判断"查看后是否追加抽样"。不记录内容、不改变抽样。 */
+  function markBatchAidViewed() {
+    const ns = readNamespace();
+    const insp = ns.activeInspection;
+    if (!insp) return { ok: false, reason: 'no-active-inspection' };
+    if (!insp.batchAidViewedAt) {
+      insp.batchAidViewedAt = new Date().toISOString();
+      insp.batchAidViewedRound = insp.rounds.length;
+      writeNamespace(ns);
+    }
+    return { ok: true };
+  }
+
   function getActive() { return readNamespace().activeInspection; }
   function listReports() { return readNamespace().reports; }
   function getReport(reportId) { return readNamespace().reports.find(r => r.reportId === reportId) || null; }
 
   global.ShipyardRuntime = Object.freeze({
-    start, abandon, sample, sampleSinglePart, submitDecision,
+    start, abandon, sample, sampleSinglePart, submitDecision, markBatchAidViewed,
     getActive, listReports, getReport,
     /* 暴露给 UI 做按钮禁用判断，不暴露修改入口 */
     coins

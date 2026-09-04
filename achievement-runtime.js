@@ -23,7 +23,12 @@
   }
 
   function matchesCondition(condition, event) {
-    if (!condition || condition.type !== 'event_match' || !event) return false;
+    if (!condition) return false;
+    if (condition.type === 'stat_check') {
+      var flagPath = 'stats.flags.' + condition.statPath;
+      return !!store.get(flagPath);
+    }
+    if (condition.type !== 'event_match' || !event) return false;
     if (condition.eventType !== event.type) return false;
     return payloadMatches(condition.payload, event.payload);
   }
@@ -83,6 +88,14 @@
     return null;
   }
 
+  function persistedFleetStat(definition) {
+    var condition = definition && definition.condition;
+    if (!condition || condition.type !== 'stat_check') return null;
+    var flagPath = 'stats.flags.' + condition.statPath;
+    if (!store.get(flagPath)) return null;
+    return store.get('meta.savedAt', null) || new Date().toISOString();
+  }
+
   function backfill() {
     var achievements = store.get('achievements', {}) || {};
     var instances = Object.assign({}, achievements.instances || {});
@@ -92,7 +105,7 @@
       if (!definition || definition.id !== achievementId) return;
       var existing = getInstance(achievementId);
       if (existing && existing.unlockedAt !== null && existing.unlockedAt !== undefined) return;
-      var factAt = persistedFactAt(definition);
+      var factAt = persistedFactAt(definition) || persistedFleetStat(definition);
       if (factAt) {
         var previous = existing || (data.createInstance ? data.createInstance(achievementId) : { progress: null, revealedAt: null, isNew: false });
         instances[achievementId] = Object.assign({}, previous, {
@@ -124,7 +137,7 @@
 
   function init() {
     if (unsubscribers.length) return false;
-    unsubscribers = [bus.on('choice_made', handleEvent), bus.on('quest_completed', handleEvent), bus.on('inspection_completed', handleEvent)];
+    unsubscribers = [bus.on('choice_made', handleEvent), bus.on('quest_completed', handleEvent), bus.on('inspection_completed', handleEvent), bus.on('fleet_campaign_completed', handleEvent), bus.on('fleet_round_settled', handleEvent)];
     backfill();
     return true;
   }

@@ -33,6 +33,23 @@
         Object.freeze({id:'coins_15',type:'coins',amount:15})
       ]),
       worldEffects:null
+    }),
+    'quest.fleet_storm_ledger':Object.freeze({
+      id:'quest.fleet_storm_ledger',
+      type:'side',
+      title:'风暴季的账本',
+      summary:'商会需要有人跑完一整季船队风险盘，证明航线不是靠运气撑过去的。',
+      giverNpcId:null,
+      locationHint:'fleet',
+      unlockWhen:Object.freeze({event:'fleet_plan_submitted'}),
+      activateWhen:Object.freeze({event:'fleet_plan_submitted'}),
+      steps:Object.freeze([
+        Object.freeze({id:'complete_campaign',text:'完整跑完一季商会船队风险盘（第 1 至 5 回合）。',completeWhen:Object.freeze({event:'fleet_campaign_completed'}),outcomeId:null})
+      ]),
+      rewards:Object.freeze([
+        Object.freeze({id:'coins_18',type:'coins',amount:18})
+      ]),
+      worldEffects:null
     })
   });
   const clone=value=>JSON.parse(JSON.stringify(value));

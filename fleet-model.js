@@ -1,4 +1,4 @@
-/* 概率世界 · 商会船队风险盘 V0.1 —— 核心模型（纯函数，无 DOM、无存档、无事件）
+/* 概率世界 · 商会船队风险盘 V0.2 —— 核心模型（纯函数，无 DOM、无存档、无事件）
  * 所有随机来自 seed：同一 seed 必定复现同一结算结果。
  * 本模块不读写 GameStore，不发射事件，不操作 DOM。 */
 (function attachFleetModel(global) {
@@ -72,7 +72,7 @@
   /* ---- 事故概率 ---- */
 
   /* effectiveP = baseRisk × (1/hull) × volatility × batchMod × stormMod, cap 0.95 */
-  function accidentProbability(vessel, route, commonRiskState, storms) {
+  function accidentProbability(vessel, route, commonRiskState, storms, qaMod) {
     var cr = CONFIG().commonRisk;
     var baseP = vessel.baseRisk;
     var hullMod = 1 / vessel.hull;
@@ -90,12 +90,14 @@
     }
 
     var p = baseP * hullMod * volMod * batchMod * stormMod;
+    /* 可选质检修正（无则不变）：由 campaign 快照派生，仍走同一事故概率上限 */
+    if (typeof qaMod === 'number') p = p * qaMod;
     return Math.min(p, 0.95);
   }
 
   /* ---- 再保险计算 ---- */
 
-  function calcReinsuranceCost(assignments, vessels) {
+  function reinsuranceCost(assignments, vessels) {
     var rate = CONFIG().reinsurance.premiumRate;
     var total = 0;
     for (var i = 0; i < vessels.length; i++) {
@@ -106,16 +108,16 @@
     return total * rate;
   }
 
-  function calcReinsuranceRecovery(cargoLoss) {
+  function reinsuranceRecovery(cargoLoss) {
     var ri = CONFIG().reinsurance;
-    if (cargoLoss <= ri.threshold) return 0;
-    var excess = cargoLoss - ri.threshold;
+    if (cargoLoss <= ri.perClaimThreshold) return 0;
+    var excess = cargoLoss - ri.perClaimThreshold;
     return excess * ri.coverRate;
   }
 
   /* ---- 单船结算 ---- */
 
-  function resolveVessel(vessel, routeId, commonRiskState, storms, seed, round) {
+  function resolveVessel(vessel, routeId, commonRiskState, storms, seed, round, qaMod) {
     var sailing = routeId !== null;
     if (!sailing) {
       return {
@@ -129,7 +131,7 @@
     var route = findRoute(routeId);
     if (!route) throw new Error('[FleetModel] unknown route: ' + routeId);
 
-    var effectiveP = accidentProbability(vessel, route, commonRiskState, storms);
+    var effectiveP = accidentProbability(vessel, route, commonRiskState, storms, qaMod);
 
     var stormHit = false;
     var stormSeverity = 0;
@@ -161,8 +163,8 @@
       }
     }
 
-    var reinsuranceRecovery = accident ? calcReinsuranceRecovery(cargoLoss) : 0;
-    var playerBorneLoss = cargoLoss - reinsuranceRecovery;
+    var recovery = accident ? reinsuranceRecovery(cargoLoss) : 0;
+    var playerBorneLoss = cargoLoss - recovery;
 
     return {
       shipId: vessel.shipId,
@@ -172,19 +174,60 @@
       cargoValue: vessel.cargoValue,
       sailing: sailing,
       accidentProbability: Math.round(effectiveP * 10000) / 10000,
-      modifiers: { storm: stormHit, batchDefect: batchDefective, stormSeverity: stormSeverity || null },
+      modifiers: { storm: stormHit, batchDefect: batchDefective, stormSeverity: stormSeverity || null, qa: (typeof qaMod === 'number' && qaMod !== 1) ? qaMod : null },
       accident: accident,
       severity: severity,
       cargoLoss: cargoLoss,
       voyageIncome: Math.round(voyageIncome * 100) / 100,
-      reinsuranceRecovery: Math.round(reinsuranceRecovery * 100) / 100,
+      reinsuranceRecovery: Math.round(recovery * 100) / 100,
       playerBorneLoss: Math.round(playerBorneLoss * 100) / 100
     };
   }
 
+  /* ---- 资金结算 ---- */
+
+  function settleFunds(operatingCash, reserve, voyageIncome, reinsuranceCostTotal, cargoLossTotal, reinsuranceRecoveryTotal) {
+    var playerLoss = cargoLossTotal - reinsuranceRecoveryTotal;
+    var netResult = voyageIncome - reinsuranceCostTotal - playerLoss;
+
+    var operatingCashAfter = operatingCash + netResult;
+    var reserveUsed = 0;
+    var insolvent = false;
+
+    if (operatingCashAfter < 0) {
+      var deficit = -operatingCashAfter;
+      if (deficit <= reserve) {
+        reserveUsed = deficit;
+        operatingCashAfter = 0;
+      } else {
+        reserveUsed = reserve;
+        operatingCashAfter = 0;
+        insolvent = true;
+      }
+    }
+
+    var reserveAfter = reserve - reserveUsed;
+    return {
+      voyageIncome: r2(voyageIncome),
+      cargoLoss: r2(cargoLossTotal),
+      reinsuranceCost: r2(reinsuranceCostTotal),
+      reinsuranceRecovery: r2(reinsuranceRecoveryTotal),
+      playerLoss: r2(playerLoss),
+      reserveUsed: r2(reserveUsed),
+      operatingCashBefore: r2(operatingCash),
+      reserveBefore: r2(reserve),
+      operatingCashAfter: r2(operatingCashAfter),
+      reserveAfter: r2(reserveAfter),
+      totalFundsAfter: r2(operatingCashAfter + reserveAfter),
+      insolvent: insolvent
+    };
+  }
+
+  function r2(n) { return Math.round(n * 100) / 100; }
+
   /* ---- 整轮结算 ---- */
 
-  function resolveRound(assignments, commonRiskState, seed, round) {
+  function resolveRound(assignments, commonRiskState, seed, round, funds, qaMods) {
     var cfg = CONFIG();
     var vessels = cfg.vessels;
     var storms = resolveStorms(round, seed, cfg.routes);
@@ -193,26 +236,32 @@
     for (var i = 0; i < vessels.length; i++) {
       var v = vessels[i];
       var routeId = assignments[v.shipId] !== undefined ? assignments[v.shipId] : v.defaultRouteId;
-      vesselResults.push(resolveVessel(v, routeId, commonRiskState, storms, seed, round));
+      vesselResults.push(resolveVessel(v, routeId, commonRiskState, storms, seed, round, qaMods ? qaMods[v.shipId] : null));
     }
 
     var totalVoyageIncome = 0;
     var totalCargoLoss = 0;
     var totalReinsuranceRecovery = 0;
+    var sailingVessels = [];
     for (var j = 0; j < vesselResults.length; j++) {
       totalVoyageIncome += vesselResults[j].voyageIncome;
       totalCargoLoss += vesselResults[j].cargoLoss;
       totalReinsuranceRecovery += vesselResults[j].reinsuranceRecovery;
+      if (vesselResults[j].sailing) sailingVessels.push(vessels[j]);
     }
 
-    var reinsuranceCost = calcReinsuranceCost(assignments, vessels);
-    var netProfit = totalVoyageIncome - totalCargoLoss + totalReinsuranceRecovery - reinsuranceCost;
+    var riCost = reinsuranceCost(assignments, vessels);
 
     var batchDefects = [];
     var batchKeys = Object.keys(commonRiskState.batches);
     for (var k = 0; k < batchKeys.length; k++) {
       if (commonRiskState.batches[batchKeys[k]].defective) batchDefects.push(batchKeys[k]);
     }
+
+    var fundsResult = settleFunds(
+      funds.operatingCash, funds.reserve,
+      totalVoyageIncome, riCost, totalCargoLoss, totalReinsuranceRecovery
+    );
 
     return {
       round: round,
@@ -221,93 +270,83 @@
       storms: storms,
       batchDefects: batchDefects,
       vesselResults: vesselResults,
-      totals: {
-        voyageIncome: Math.round(totalVoyageIncome * 100) / 100,
-        cargoLoss: Math.round(totalCargoLoss * 100) / 100,
-        reinsuranceCost: Math.round(reinsuranceCost * 100) / 100,
-        reinsuranceRecovery: Math.round(totalReinsuranceRecovery * 100) / 100,
-        netProfit: Math.round(netProfit * 100) / 100
-      }
+      voyageIncome: fundsResult.voyageIncome,
+      cargoLoss: fundsResult.cargoLoss,
+      reinsuranceCost: fundsResult.reinsuranceCost,
+      reinsuranceRecovery: fundsResult.reinsuranceRecovery,
+      playerLoss: fundsResult.playerLoss,
+      reserveUsed: fundsResult.reserveUsed,
+      operatingCashBefore: fundsResult.operatingCashBefore,
+      reserveBefore: fundsResult.reserveBefore,
+      operatingCashAfter: fundsResult.operatingCashAfter,
+      reserveAfter: fundsResult.reserveAfter,
+      totalFundsAfter: fundsResult.totalFundsAfter,
+      insolvent: fundsResult.insolvent
     };
   }
 
   /* ---- 事前预期（概率加权） ---- */
 
-  function expectedRound(assignments, commonRiskState, seed, round) {
+  function expectedRound(assignments, commonRiskState, seed, round, qaMods) {
     var cfg = CONFIG();
     var vessels = cfg.vessels;
     var storms = resolveStorms(round, seed, cfg.routes);
 
     var expectedIncome = 0;
     var expectedLoss = 0;
+    var routeCounts = {};
+    var batchCounts = {};
 
     for (var i = 0; i < vessels.length; i++) {
       var v = vessels[i];
       var routeId = assignments[v.shipId] !== undefined ? assignments[v.shipId] : v.defaultRouteId;
       if (!routeId) continue;
       var route = findRoute(routeId);
-      var p = accidentProbability(v, route, commonRiskState, storms);
+      var p = accidentProbability(v, route, commonRiskState, storms, qaMods ? qaMods[v.shipId] : null);
       var sevCfg = cfg.accidentSeverity;
 
       var incomeIfSafe = v.cargoValue * route.yieldRate;
       expectedIncome += incomeIfSafe * (1 - p);
 
-      var totalLossProb = sevCfg.totalLossWeight;
-      var partialFrac = (sevCfg.partialFractionMin + sevCfg.partialFractionMax) / 2;
-      var expectedLossIfAccident = v.cargoValue * totalLossProb + v.cargoValue * (1 - totalLossProb) * partialFrac;
+      var expectedLossIfAccident = v.cargoValue * sevCfg.totalLossWeight
+        + v.cargoValue * (1 - sevCfg.totalLossWeight)
+          * (sevCfg.partialFractionMin + sevCfg.partialFractionMax) / 2;
       expectedLoss += p * expectedLossIfAccident;
+
+      routeCounts[routeId] = (routeCounts[routeId] || 0) + 1;
+      batchCounts[v.batchId] = (batchCounts[v.batchId] || 0) + 1;
     }
 
-    var reinsuranceCost = calcReinsuranceCost(assignments, vessels);
+    var riCost = reinsuranceCost(assignments, vessels);
+
     var expectedRecovery = 0;
     for (var j = 0; j < vessels.length; j++) {
       var vj = vessels[j];
       var rj = assignments[vj.shipId] !== undefined ? assignments[vj.shipId] : vj.defaultRouteId;
       if (!rj) continue;
       var routeJ = findRoute(rj);
-      var pJ = accidentProbability(vj, routeJ, commonRiskState, storms);
+      var pJ = accidentProbability(vj, routeJ, commonRiskState, storms, qaMods ? qaMods[vj.shipId] : null);
       var sevCfgJ = cfg.accidentSeverity;
-      var totalLossProbJ = sevCfgJ.totalLossWeight;
-      var partialFracJ = (sevCfgJ.partialFractionMin + sevCfgJ.partialFractionMax) / 2;
-      var expectedLossJ = pJ * (vj.cargoValue * totalLossProbJ + vj.cargoValue * (1 - totalLossProbJ) * partialFracJ);
-      expectedRecovery += pJ * calcReinsuranceRecovery(expectedLossJ);
+      var expectedLossJ = pJ * (vj.cargoValue * sevCfgJ.totalLossWeight
+        + vj.cargoValue * (1 - sevCfgJ.totalLossWeight)
+          * (sevCfgJ.partialFractionMin + sevCfgJ.partialFractionMax) / 2);
+      expectedRecovery += pJ * reinsuranceRecovery(expectedLossJ);
     }
 
+    var sailingCount = Object.keys(routeCounts).reduce(function(s, k) { return s + routeCounts[k]; }, 0);
+    var routeConcentration = sailingCount > 0
+      ? Object.keys(routeCounts).map(function(k) { return { routeId: k, count: routeCounts[k] }; })
+      : [];
+    var batchConcentration = Object.keys(batchCounts).map(function(k) { return { batchId: k, count: batchCounts[k] }; });
+
     return {
-      expectedVoyageIncome: Math.round(expectedIncome * 100) / 100,
-      expectedCargoLoss: Math.round(expectedLoss * 100) / 100,
-      expectedReinsuranceRecovery: Math.round(expectedRecovery * 100) / 100,
-      reinsuranceCost: Math.round(reinsuranceCost * 100) / 100,
-      expectedNetProfit: Math.round((expectedIncome - expectedLoss + expectedRecovery - reinsuranceCost) * 100) / 100
-    };
-  }
-
-  /* ---- 准备金与资金 ---- */
-
-  function applyReserve(operatingCash, reserve, netProfit) {
-    var capCfg = CONFIG().capital;
-    var newCash = operatingCash + netProfit;
-    var reserveUsed = 0;
-    var insolvent = false;
-
-    if (newCash < 0) {
-      var deficit = -newCash;
-      if (deficit <= reserve) {
-        reserveUsed = deficit;
-        newCash = 0;
-      } else {
-        reserveUsed = reserve;
-        newCash = 0;
-        insolvent = true;
-      }
-    }
-
-    var newReserve = reserve - reserveUsed;
-    return {
-      operatingCashAfter: Math.round(newCash * 100) / 100,
-      reserveUsed: Math.round(reserveUsed * 100) / 100,
-      reserveAfter: Math.round(newReserve * 100) / 100,
-      insolvent: insolvent
+      expectedVoyageIncome: r2(expectedIncome),
+      expectedCargoLoss: r2(expectedLoss),
+      expectedReinsuranceCost: r2(riCost),
+      expectedReinsuranceRecovery: r2(expectedRecovery),
+      expectedNetResult: r2(expectedIncome - expectedLoss + expectedRecovery - riCost),
+      routeConcentration: routeConcentration,
+      batchConcentration: batchConcentration
     };
   }
 
@@ -321,11 +360,10 @@
     deriveCommonRiskState: deriveCommonRiskState,
     resolveStorms: resolveStorms,
     accidentProbability: accidentProbability,
-    calcReinsuranceCost: calcReinsuranceCost,
-    calcReinsuranceRecovery: calcReinsuranceRecovery,
+    reinsuranceCost: reinsuranceCost,
+    reinsuranceRecovery: reinsuranceRecovery,
     resolveVessel: resolveVessel,
     resolveRound: resolveRound,
-    expectedRound: expectedRound,
-    applyReserve: applyReserve
+    expectedRound: expectedRound
   });
 })(typeof window !== 'undefined' ? window : globalThis);
